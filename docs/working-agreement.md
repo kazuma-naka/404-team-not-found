@@ -81,3 +81,15 @@ During our inclusivity discussion, each member suggested one idea to improve tea
 |------|--------------|--------|-----------|
 | 2025-10-21 | Initial creation (Teams version – Norms + Inclusivity + Clarity) | _Your Name_ | _Teammate Name_ |
 | YYYY-MM-DD | Inclusivity update |  |  |
+
+## Inclusivity Drill
+
+### Oct/21/2025
+- Facilitator: Katie
+- Scribe: Kazuma
+- Contributors: teniola, Chloe
+
+#### Summary:
+- Adding light and dark mode.
+- Adding tags in tasks.
+- Auto-saving tasks.
