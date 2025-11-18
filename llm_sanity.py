@@ -4,13 +4,13 @@ smollm_client が使っている libllama.so / model をそのまま使って、
 easy_llama が正しく動くか確認するためのテストスクリプト。
 """
 
-from llm.smollm_client import generate_rewrite
 import os
 from pathlib import Path
 
 import easy_llama as ez  # ここで import が通るかも確認
-import llm.smollm_client as sm  # smollm_client の設定を使う
 
+import llm.smollm_client as sm  # smollm_client の設定を使う
+from llm.smollm_client import generate_rewrite
 
 print("=== LLM sanity test ===")
 

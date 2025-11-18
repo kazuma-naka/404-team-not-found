@@ -7,11 +7,11 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, X
 
 from llm.smollm_client import (
-    generate_rewrite,
     generate_qa_answer,
+    generate_rewrite,
     get_current_model_path,
-    set_model_path,
     reset_to_default_model,
+    set_model_path,
 )
 
 

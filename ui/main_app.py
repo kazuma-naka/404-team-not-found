@@ -2,10 +2,10 @@
 import tkinter as tk
 
 import ttkbootstrap as ttk
-from ttkbootstrap.constants import BOTH, X, YES
+from ttkbootstrap.constants import BOTH, YES, X
 
-from ui.task_manager import TaskManagerFrame
 from ui.llm_chat import LlmChatFrame
+from ui.task_manager import TaskManagerFrame
 
 
 class MainAppFrame(ttk.Frame):

@@ -5,8 +5,8 @@ from pathlib import Path
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, YES
 
-from ui.welcome import WelcomeScreen
 from ui.main_app import MainAppFrame
+from ui.welcome import WelcomeScreen
 
 
 def resource_path(rel: str) -> Path:

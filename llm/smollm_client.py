@@ -8,6 +8,8 @@ from typing import Optional
 
 import easy_llama as ez  # pip install easy_llama
 
+DEBUG_LLM = os.environ.get("DEBUG_LLM", "0") == "1"
+
 
 def resource_path(rel: str) -> Path:
     """
@@ -169,16 +171,38 @@ def _get_llm() -> ez.Llama:
     return _load_model(_MODEL_PATH)
 
 
+SPECIAL_MARKERS = ("<|im_end|>", "<|endoftext|>", "<|im_start|>")
+
+# デバッグ ON/OFF 切り替えフラグ
+DEBUG_LLM = True
+
+
+def _d(msg: str) -> None:
+    """LLM 用の簡易デバッグ出力。"""
+    if not DEBUG_LLM:
+        return
+    # 必要ならファイル出力に変えてもOK
+    print(msg, file=sys.stderr, flush=True)
+
+
 def _run_llm(prompt: str, max_tokens: int) -> str:
-    """共通の LLM 呼び出し処理。"""
     llm = _get_llm()
 
+    _d("=== [_run_llm] called ===")
+    _d(f"  MODEL_PATH:   {_MODEL_PATH}")
+    _d(f"  max_tokens:   {max_tokens}")
+    # 長すぎると見づらいので先頭だけ出す
+    _d(f"  prompt:       {repr(prompt[:200])}...(len={len(prompt)})")
+
+    # ---- tokenize ---------------------------------------------------------
     in_tokens = llm.tokenize(
         prompt.encode("utf-8"),
         add_special=True,
         parse_special=False,
     )
+    _d(f"  in_tokens ({len(in_tokens)}): {in_tokens}")
 
+    # ---- generate ---------------------------------------------------------
     out_tokens_raw = llm.generate(in_tokens, n_predict=max_tokens)
 
     if hasattr(out_tokens_raw, "tolist"):
@@ -186,6 +210,9 @@ def _run_llm(prompt: str, max_tokens: int) -> str:
     else:
         out_tokens = list(out_tokens_raw)
 
+    _d(f"  out_tokens ({len(out_tokens)}): {out_tokens}")
+
+    # ---- detokenize -------------------------------------------------------
     out_text = llm.detokenize(out_tokens, special=True)
 
     # bytes -> str に統一
@@ -194,21 +221,46 @@ def _run_llm(prompt: str, max_tokens: int) -> str:
     else:
         raw_text = str(out_text)
 
+    _d(f"  raw_text: {repr(raw_text)}")
+
+    if any(marker in raw_text for marker in SPECIAL_MARKERS):
+        _d("  [LLM DEBUG] raw_text contains special marker(s): "
+           + ", ".join(m for m in SPECIAL_MARKERS if m in raw_text))
+
     # ------ ここから「掃除」処理 -----------------------------------------
     text = raw_text.strip()
 
-    # 先頭に付くかもしれないお約束トークンを軽く削除
-    # 必要最低限に絞る（Rewritten / Assistant だけ）
+    # 先頭プレフィックスだけ軽く除去
     for prefix in ("Rewritten:", "Assistant:"):
         if text.startswith(prefix):
+            _d(f"  stripping prefix: {repr(prefix)}")
             text = text[len(prefix):].lstrip()
 
-    # 両端のクォートもついでに削る
-    text = text.strip().strip('"').strip("'")
+    # 制御トークンを全部除去
+    for marker in SPECIAL_MARKERS:
+        if marker in text:
+            _d(f"  removing marker: {marker}")
+            text = text.replace(marker, " ")
 
-    # 掃除しすぎて空になった場合は、元のテキストをそのまま返す
+    # 両端のクォートもついでに削る
+    before_quotes = text
+    text = text.strip().strip('"').strip("'")
+    if text != before_quotes:
+        _d("  stripped surrounding quotes")
+
+    # 余計な連続スペースを正規化
+    text = " ".join(text.split())
+
+    # 掃除しすぎて空になった場合は、raw_text から制御トークンを消したものを最後の手段として返す
     if not text:
-        text = raw_text.strip()
+        _d("  [WARN] text became empty after cleaning, using fallback")
+        fallback = raw_text
+        for marker in SPECIAL_MARKERS:
+            fallback = fallback.replace(marker, " ")
+        text = " ".join(fallback.split()).strip()
+
+    _d(f"  final text: {repr(text)}")
+    _d("=== [_run_llm] end ===")
 
     return text
 
@@ -221,8 +273,7 @@ def generate_rewrite(user_message: str, max_tokens: int = 128) -> str:
     prompt = (
         "Rewrite the following text in natural, professional and polite English.\n"
         "- Keep the original meaning.\n"
-        "- Fix grammar and word choice.\n"
-        "- Answer with the rewritten sentence only.\n\n"
+        "- Fix grammar and word choice to be kind and polite.\n"
         f"Text: \"{user_message.strip()}\"\n"
         "Rewritten:"
     )
