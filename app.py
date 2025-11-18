@@ -1,11 +1,12 @@
+# app.py
 import sys
 from pathlib import Path
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, YES
 
-from ui.task_manager import TaskManagerFrame
 from ui.welcome import WelcomeScreen
+from ui.main_app import MainAppFrame
 
 
 def resource_path(rel: str) -> Path:
@@ -22,19 +23,17 @@ def resource_path(rel: str) -> Path:
 
 
 def main() -> None:
-    # Main window acts as the "controller" for TaskManagerFrame (exposes .db, .logout, .title()).
+    # Main window (controller for all main screens)
     app = ttk.Window(themename="superhero")
     app.title("Task Manager")
     app.geometry("900x600")
 
-    # Resolve resources for both dev and PyInstaller runtimes
-    # created on first run if absent
+    # DB / schema paths (dev + PyInstaller 両対応)
     db_path = resource_path("task_manager.db")
-    # bundled via --add-data in CI
     schema_path = resource_path("db/schema.sql")
 
     def logout() -> None:
-        """Return to the Welcome screen (clear current user session if you add one later)."""
+        """Return to the Welcome screen."""
         app.title("Task Manager")
         show_welcome()
 
@@ -43,28 +42,33 @@ def main() -> None:
         Called by WelcomeScreen after a successful Login/Register.
         user_row is a sqlite3.Row with keys: id, name, email.
         """
-        # Swap to TaskManagerFrame
+        # Clear current content
         for w in app.winfo_children():
             w.destroy()
-        # Ensure the controller exposes the API TaskManagerFrame expects
+
+        # Controller API exposed to children
         app.logout = logout  # type: ignore[attr-defined]
-        tm = TaskManagerFrame(app, app)  # (parent widget, controller = app)
-        tm.set_user(user_row["id"])
-        tm.pack(fill=BOTH, expand=YES)
+
+        # MainAppFrame 内で TaskManager + LLM Chat を切り替える
+        main_frame = MainAppFrame(app, app, user_row)
+        main_frame.pack(fill=BOTH, expand=YES)
 
     def show_welcome() -> None:
         """Show the Welcome screen and initialize the DatabaseManager."""
         for w in app.winfo_children():
             w.destroy()
+
         screen = WelcomeScreen(
             app,
             db_path=str(db_path),
             schema_path=str(schema_path),
             on_login=on_login,
         )
-        # Expose DB handle on the controller (TaskManagerFrame expects controller.db)
+
+        # Expose DB handle on the controller (TaskManagerFrame / MainAppFrame expects controller.db)
         app.db = screen.db  # type: ignore[attr-defined]
         app.logout = logout  # type: ignore[attr-defined]
+
         screen.pack(fill=BOTH, expand=YES)
 
     # Initial screen
