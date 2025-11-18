@@ -9,6 +9,7 @@ from ttkbootstrap.constants import BOTH, X
 from llm.smollm_client import (
     generate_qa_answer,
     generate_rewrite,
+    generate_spellcheck,
     get_current_model_path,
     reset_to_default_model,
     set_model_path,
@@ -17,8 +18,13 @@ from llm.smollm_client import (
 
 class SingleLlmTab(ttk.Frame):
     """
-    1 つの LLM タブ（ログ、入力欄、Send / Reset / Copy ボタン）をまとめたクラス。
-    generate_func で、書き換え or Q&A を切り替える。
+    A single LLM tab that contains:
+      - log area,
+      - input area,
+      - Send / Reset / Copy buttons,
+      - status bar.
+
+    The behavior is controlled by the provided generate_func.
     """
 
     def __init__(
@@ -34,7 +40,7 @@ class SingleLlmTab(ttk.Frame):
         self._last_reply: str | None = None
         self._system_message = system_message
 
-        # ステータス表示用（Copied! など）
+        # Status bar text (used as a lightweight toast)
         self._status_var = tk.StringVar(value="")
 
         # ---- Chat Log ------------------------------------------------------
@@ -49,7 +55,7 @@ class SingleLlmTab(ttk.Frame):
         )
         self.txt_log.pack(fill=BOTH, expand=True)
 
-        # 🔹コピー用ボタンを置く小さなフレーム
+        # Copy-last-reply button below the log
         copy_btn_frame = ttk.Frame(log_frame)
         copy_btn_frame.pack(fill=X, pady=(4, 0))
 
@@ -87,7 +93,7 @@ class SingleLlmTab(ttk.Frame):
         )
         self.btn_reset.pack(fill=X, pady=(8, 0))
 
-        # ---- Status Bar (簡易トースト用) -----------------------------------
+        # ---- Status Bar (lightweight toast) --------------------------------
         status_label = ttk.Label(
             self,
             textvariable=self._status_var,
@@ -97,15 +103,15 @@ class SingleLlmTab(ttk.Frame):
         )
         status_label.pack(fill=X, pady=(4, 0))
 
-        # ショートカット: Ctrl+Enter で送信
+        # Shortcut: Ctrl+Enter to send
         self.txt_input.bind("<Control-Return>", self._on_ctrl_enter)
 
-        # 初期メッセージ
+        # Initial system message
         self._append_system(self._system_message)
 
     # ---- Helpers -----------------------------------------------------------
     def _append_text(self, prefix: str, text: str):
-        """ログにメッセージを追加。"""
+        """Append a message to the log."""
         self.txt_log.configure(state="normal")
         self.txt_log.insert(tk.END, f"{prefix}: {text}\n\n")
         self.txt_log.see(tk.END)
@@ -121,13 +127,15 @@ class SingleLlmTab(ttk.Frame):
         self._append_text("System", text)
 
     def _show_status(self, message: str, duration_ms: int = 1500):
-        """下部にステータステキストを一時的に表示（簡易トースト）。"""
+        """
+        Show a short status message in the bottom bar (like a toast).
+        Automatically clears after duration_ms milliseconds.
+        """
         self._status_var.set(message)
-        # duration_ms 後にクリア
         self.after(duration_ms, lambda: self._status_var.set(""))
 
     def show_status(self, message: str, duration_ms: int = 1500):
-        """外からも呼べるステータス表示のラッパー。"""
+        """Public wrapper so the parent frame can show status messages."""
         self._show_status(message, duration_ms)
 
     # ---- Events ------------------------------------------------------------
@@ -136,6 +144,7 @@ class SingleLlmTab(ttk.Frame):
         return "break"
 
     def on_send(self):
+        """Called when the Send button (or Ctrl+Enter) is pressed."""
         msg = self.txt_input.get("1.0", tk.END).strip()
         if not msg:
             return
@@ -145,7 +154,7 @@ class SingleLlmTab(ttk.Frame):
 
         self.btn_send.configure(state="disabled", text="Thinking...")
 
-        # 別スレッドで LLM を叩く
+        # Run LLM in a background thread
         threading.Thread(
             target=self._run_llm_thread,
             args=(msg,),
@@ -158,19 +167,18 @@ class SingleLlmTab(ttk.Frame):
         except Exception as e:
             reply = f"[Error while generating reply: {e}]"
 
-        # UI 更新はメインスレッドで
+        # UI updates must be done on the main thread
         self.after(0, lambda: self._on_llm_done(reply))
 
     def _on_llm_done(self, reply: str):
-        # 🔹最後の回答を保存
+        """Called when LLM generation finishes."""
         self._last_reply = reply
-
         self._append_bot(reply)
         self.btn_send.configure(state="normal", text="Send")
 
     # ---- Copy last reply ---------------------------------------------------
     def on_copy_last_reply(self):
-        """最後の Assistant 応答をクリップボードにコピーする。"""
+        """Copy the last Assistant reply to the clipboard."""
         if not self._last_reply:
             self._show_status("No reply to copy yet.")
             return
@@ -181,7 +189,13 @@ class SingleLlmTab(ttk.Frame):
 
     # ---- Reset -------------------------------------------------------------
     def on_reset(self):
-        """タブ内のチャット履歴と入力欄をリセットする。"""
+        """
+        Reset the conversation in this tab:
+          - clear log,
+          - clear input box,
+          - forget last reply,
+          - re-show the system message.
+        """
         self.txt_log.configure(state="normal")
         self.txt_log.delete("1.0", tk.END)
         self.txt_log.configure(state="disabled")
@@ -189,13 +203,20 @@ class SingleLlmTab(ttk.Frame):
         self.txt_input.delete("1.0", tk.END)
         self._last_reply = None
 
-        # 初期メッセージを再表示
         self._append_system(self._system_message)
         self._show_status("Conversation reset.")
 
 
 class LlmChatFrame(ttk.Frame):
-    """llama.cpp (SmolLM2) を使った、Rewrite / Q&A タブ付きチャット画面。"""
+    """
+    Main frame that provides:
+
+      - Model selection (current model, change, reset)
+      - Notebook with three tabs:
+         * Rewrite: rewrite English text politely
+         * Typos: fix English typos with minimal changes
+         * Q&A: general question & answer
+    """
 
     def __init__(self, parent, controller):
         super().__init__(parent)
@@ -233,11 +254,11 @@ class LlmChatFrame(ttk.Frame):
         )
         self.btn_model_browse.pack(side=tk.RIGHT, padx=(0, 4))
 
-        # ==== Notebook (Rewrite / Q&A) ======================================
+        # ==== Notebook (Rewrite / Typos / Q&A) ==============================
         notebook = ttk.Notebook(self)
         notebook.pack(fill=BOTH, expand=True)
 
-        # ---- Rewrite タブ --------------------------------------------------
+        # ---- Rewrite tab ---------------------------------------------------
         self.rewrite_tab = SingleLlmTab(
             notebook,
             title_label="Rewrite (English)",
@@ -248,7 +269,18 @@ class LlmChatFrame(ttk.Frame):
             generate_func=generate_rewrite,
         )
 
-        # ---- Q&A タブ ------------------------------------------------------
+        # ---- Typos tab -----------------------------------------------------
+        self.typo_tab = SingleLlmTab(
+            notebook,
+            title_label="Fix Typos (English)",
+            system_message=(
+                "This tab fixes English typos and spelling mistakes.\n"
+                "It keeps your wording and style, and only corrects errors."
+            ),
+            generate_func=generate_spellcheck,
+        )
+
+        # ---- Q&A tab -------------------------------------------------------
         self.qa_tab = SingleLlmTab(
             notebook,
             title_label="LLM Q&A",
@@ -260,6 +292,7 @@ class LlmChatFrame(ttk.Frame):
         )
 
         notebook.add(self.rewrite_tab, text="Rewrite")
+        notebook.add(self.typo_tab, text="Typos")
         notebook.add(self.qa_tab, text="Q&A")
 
     # ==== Model change handlers =============================================
@@ -268,7 +301,7 @@ class LlmChatFrame(ttk.Frame):
         self.btn_model_reset.configure(state=state)
 
     def on_change_model(self):
-        """ユーザーに .gguf を選ばせてモデルを切り替える。"""
+        """Let the user choose a GGUF file and switch the model."""
         path = filedialog.askopenfilename(
             title="Select GGUF model file",
             filetypes=[("GGUF model", "*.gguf"), ("All files", "*.*")],
@@ -295,7 +328,7 @@ class LlmChatFrame(ttk.Frame):
             self.after(0, lambda: self._on_model_loaded(True, ""))
 
     def on_reset_model(self):
-        """デフォルトモデルに戻す。"""
+        """Reset the model to the default one."""
         self.model_path_var.set("Resetting to default model...")
         self._set_model_buttons_state("disabled")
 
@@ -314,17 +347,19 @@ class LlmChatFrame(ttk.Frame):
             self.after(0, lambda: self._on_model_loaded(True, ""))
 
     def _on_model_loaded(self, success: bool, error_msg: str):
+        """Update UI after model load/reset finishes."""
         self._set_model_buttons_state("normal")
-        # 現在のモデルパスを反映（成功していない場合は古いまま）
         self.model_path_var.set(get_current_model_path())
 
         if success:
-            # 各タブのステータスバーにも表示
+            # Show a short message on each tab
             self.rewrite_tab.show_status("Model changed.")
+            self.typo_tab.show_status("Model changed.")
             self.qa_tab.show_status("Model changed.")
             messagebox.showinfo("Model", "Model loaded successfully.")
         else:
             self.rewrite_tab.show_status("Failed to change model.")
+            self.typo_tab.show_status("Failed to change model.")
             self.qa_tab.show_status("Failed to change model.")
             messagebox.showerror("Model load error",
                                  f"Failed to load model:\n{error_msg}")

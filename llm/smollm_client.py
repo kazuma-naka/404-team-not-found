@@ -8,35 +8,43 @@ from typing import Optional
 
 import easy_llama as ez  # pip install easy_llama
 
+# Debug flag: set DEBUG_LLM=1 in environment to enable verbose logging
 DEBUG_LLM = os.environ.get("DEBUG_LLM", "0") == "1"
 
 
 def resource_path(rel: str) -> Path:
     """
-    Dev と PyInstaller 両対応のパス解決。
-    app.py と同じロジックをここにもコピーしておく。
+    Resolve a path relative to the project root.
+
+    This works both in development and when packaged with PyInstaller.
+    It follows the same logic as app.py.
     """
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         base = Path(sys._MEIPASS)  # type: ignore[attr-defined]
     else:
-        # プロジェクトルート（このファイルの 2 つ上の階層）を基準にする
+        # Use the project root (two levels above this file) as the base
         base = Path(__file__).resolve().parents[1]
     return base / rel
 
 
-# ---- libllama.so の場所を設定 ---------------------------------------------
+# ---- libllama.so setup -----------------------------------------------------
 
 LIB_PATH = resource_path("native/libllama.so")
 os.environ.setdefault("LIBLLAMA", str(LIB_PATH))
 
-# ---- 設定ファイル ---------------------------------------------------------
+# ---- Config file -----------------------------------------------------------
 
-# ユーザーごとの設定をホームディレクトリに保存
+# Store user-specific model path in the home directory
 CONFIG_PATH = Path.home() / ".404_team_not_found_llm.json"
 
 
 def _load_config_model_path() -> Optional[Path]:
-    """設定ファイルから model_path を読み込む。なければ None。"""
+    """
+    Load model_path from the config file.
+
+    Returns:
+        Path if found and valid, otherwise None.
+    """
     if not CONFIG_PATH.is_file():
         return None
 
@@ -47,12 +55,16 @@ def _load_config_model_path() -> Optional[Path]:
             return None
         return Path(path_str)
     except Exception:
-        # 壊れた JSON などは無視
+        # Ignore corrupted JSON or unexpected errors
         return None
 
 
 def _save_config_model_path(path: Path) -> None:
-    """設定ファイルに model_path を保存する。"""
+    """
+    Save model_path to the config file.
+
+    Failures are silently ignored so the app can still run.
+    """
     try:
         CONFIG_PATH.write_text(
             json.dumps({"model_path": str(path)},
@@ -60,19 +72,19 @@ def _save_config_model_path(path: Path) -> None:
             encoding="utf-8",
         )
     except Exception:
-        # 設定保存に失敗してもアプリ自体は動かしたいので握りつぶす
+        # Do not crash the app if saving the config fails
         pass
 
 
-# ---- モデルパス関連 --------------------------------------------------------
+# ---- Model path handling ---------------------------------------------------
 
-# デフォルトモデル（従来通り）
+# Default model (same as before)
 _DEFAULT_MODEL_REL = "models/SmolLM2-1.7B-Instruct-Q2_K_L.gguf"
 
-# 優先順位:
-# 1. 設定ファイルに保存されている model_path
-# 2. 環境変数 SMOLLM_MODEL_PATH
-# 3. デフォルトの相対パス
+# Priority:
+# 1. model_path stored in the config file
+# 2. environment variable SMOLLM_MODEL_PATH
+# 3. default relative path
 _saved_model = _load_config_model_path()
 _env_model = os.environ.get("SMOLLM_MODEL_PATH")
 
@@ -87,32 +99,33 @@ elif _env_model:
 else:
     _MODEL_PATH = resource_path(_DEFAULT_MODEL_REL)
 
-# easy_llama の Llama インスタンス（遅延ロード）
+# Global Llama instance (lazy-loaded)
 _llm: Optional[ez.Llama] = None
 _model_lock = threading.Lock()
 
 
 def _load_model(model_path: Path) -> ez.Llama:
     """
-    model_path のモデルをロードし、グローバルに保持する。
-    すでに同じパスでロード済みなら再利用。
+    Load a model from model_path and keep it globally.
+
+    If the same path is already loaded, reuse the existing instance.
     """
     global _llm, _MODEL_PATH
 
     with _model_lock:
-        # すでに同じパスでロード済みならそのまま返す
+        # Reuse if the requested model is already loaded
         if _llm is not None and _MODEL_PATH == model_path:
             return _llm  # type: ignore[return-value]
 
-        # 存在チェック
+        # Check existence
         if not model_path.is_file():
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
-        # 新しくロード
+        # Load new model
         _llm = ez.Llama(str(model_path), verbose=False)
         _MODEL_PATH = model_path
 
-        # 設定ファイルにも保存（絶対パスにしておく）
+        # Save absolute path to config
         try:
             resolved = model_path.resolve()
         except Exception:
@@ -124,17 +137,15 @@ def _load_model(model_path: Path) -> ez.Llama:
 
 def set_model_path(path: str | Path, *, relative_to_project: bool = False) -> None:
     """
-    使用するモデルファイルのパスを動的に変更する。
+    Change the model file path dynamically.
 
-    Parameters
-    ----------
-    path : str | Path
-        モデル(.gguf)へのパス。
-        - absolute path: そのまま使用
-        - relative_to_project=True の場合は project root からの相対パスとみなす
-    relative_to_project : bool
-        True の場合は resource_path() を通してプロジェクトルートからの相対パスとして解決。
-        False の場合は渡されたパスをそのまま Path(path) として扱う。
+    Args:
+        path: Path to the GGUF model file.
+              - If absolute, it is used as is.
+              - If relative_to_project=True, it is resolved via resource_path().
+        relative_to_project:
+              True: treat path as relative to project root.
+              False: treat path as-is (Path(path)).
     """
     if isinstance(path, Path):
         p = path
@@ -144,54 +155,59 @@ def set_model_path(path: str | Path, *, relative_to_project: bool = False) -> No
         else:
             p = Path(path)
 
-    # ロードしてグローバルを差し替え（この中で設定保存も行う）
+    # Load model and update globals (also saves to config)
     _load_model(p)
 
 
 def get_current_model_path() -> str:
     """
-    現在使用しているモデルファイルのフルパスを文字列で返す。
-    UI から表示したいときなどに使う想定。
+    Return the full path of the currently used model file as a string.
     """
     return str(_MODEL_PATH)
 
 
 def reset_to_default_model() -> None:
     """
-    デフォルトのモデル（_DEFAULT_MODEL_REL）に戻すヘルパー。
+    Reset the model path to the default model (_DEFAULT_MODEL_REL).
     """
     set_model_path(_DEFAULT_MODEL_REL, relative_to_project=True)
 
 
 def _get_llm() -> ez.Llama:
     """
-    内部用: 現在の _MODEL_PATH に対応する Llama インスタンスを取得。
-    未ロードならここでロードする（遅延ロード）。
+    Internal helper: obtain the Llama instance for the current _MODEL_PATH.
+
+    If not loaded yet, load it lazily.
     """
     return _load_model(_MODEL_PATH)
 
 
 SPECIAL_MARKERS = ("<|im_end|>", "<|endoftext|>", "<|im_start|>")
 
-# デバッグ ON/OFF 切り替えフラグ
-DEBUG_LLM = True
-
 
 def _d(msg: str) -> None:
-    """LLM 用の簡易デバッグ出力。"""
+    """
+    Simple debug logger for LLM-related messages.
+    Prints to stderr when DEBUG_LLM is True.
+    """
     if not DEBUG_LLM:
         return
-    # 必要ならファイル出力に変えてもOK
     print(msg, file=sys.stderr, flush=True)
 
 
 def _run_llm(prompt: str, max_tokens: int) -> str:
+    """
+    Low-level function that:
+      1. tokenizes the prompt,
+      2. generates tokens,
+      3. detokenizes the output,
+      4. performs basic cleaning.
+    """
     llm = _get_llm()
 
     _d("=== [_run_llm] called ===")
     _d(f"  MODEL_PATH:   {_MODEL_PATH}")
     _d(f"  max_tokens:   {max_tokens}")
-    # 長すぎると見づらいので先頭だけ出す
     _d(f"  prompt:       {repr(prompt[:200])}...(len={len(prompt)})")
 
     # ---- tokenize ---------------------------------------------------------
@@ -215,7 +231,7 @@ def _run_llm(prompt: str, max_tokens: int) -> str:
     # ---- detokenize -------------------------------------------------------
     out_text = llm.detokenize(out_tokens, special=True)
 
-    # bytes -> str に統一
+    # Normalize to str
     if isinstance(out_text, bytes):
         raw_text = out_text.decode("utf-8", errors="ignore")
     else:
@@ -224,34 +240,36 @@ def _run_llm(prompt: str, max_tokens: int) -> str:
     _d(f"  raw_text: {repr(raw_text)}")
 
     if any(marker in raw_text for marker in SPECIAL_MARKERS):
-        _d("  [LLM DEBUG] raw_text contains special marker(s): "
-           + ", ".join(m for m in SPECIAL_MARKERS if m in raw_text))
+        _d(
+            "  [LLM DEBUG] raw_text contains special marker(s): "
+            + ", ".join(m for m in SPECIAL_MARKERS if m in raw_text)
+        )
 
-    # ------ ここから「掃除」処理 -----------------------------------------
+    # ---- cleaning ---------------------------------------------------------
     text = raw_text.strip()
 
-    # 先頭プレフィックスだけ軽く除去
-    for prefix in ("Rewritten:", "Assistant:"):
+    # Strip known prefixes
+    for prefix in ("Rewritten:", "Assistant:", "Corrected:"):
         if text.startswith(prefix):
             _d(f"  stripping prefix: {repr(prefix)}")
             text = text[len(prefix):].lstrip()
 
-    # 制御トークンを全部除去
+    # Remove special markers
     for marker in SPECIAL_MARKERS:
         if marker in text:
             _d(f"  removing marker: {marker}")
             text = text.replace(marker, " ")
 
-    # 両端のクォートもついでに削る
+    # Strip surrounding quotes if any
     before_quotes = text
     text = text.strip().strip('"').strip("'")
     if text != before_quotes:
         _d("  stripped surrounding quotes")
 
-    # 余計な連続スペースを正規化
+    # Normalize repeated spaces
     text = " ".join(text.split())
 
-    # 掃除しすぎて空になった場合は、raw_text から制御トークンを消したものを最後の手段として返す
+    # Fallback: if we over-cleaned and got empty, use a cleaned raw_text
     if not text:
         _d("  [WARN] text became empty after cleaning, using fallback")
         fallback = raw_text
@@ -267,8 +285,9 @@ def _run_llm(prompt: str, max_tokens: int) -> str:
 
 def generate_rewrite(user_message: str, max_tokens: int = 128) -> str:
     """
-    英文を書き換える専用プロンプト。
-    UI の「Rewrite」タブから呼び出す想定。
+    Rewrite English text in natural, professional, and polite English.
+
+    Intended for the "Rewrite" tab in the UI.
     """
     prompt = (
         "Rewrite the following text in natural, professional and polite English.\n"
@@ -280,10 +299,30 @@ def generate_rewrite(user_message: str, max_tokens: int = 128) -> str:
     return _run_llm(prompt, max_tokens=max_tokens)
 
 
+def generate_spellcheck(user_message: str, max_tokens: int = 128) -> str:
+    """
+    Fix English spelling and simple typing mistakes with minimal changes.
+
+    The goal is to keep the original wording and style as much as possible
+    and only correct typos, spacing, and basic grammar issues.
+    """
+    prompt = (
+        "You are an assistant that ONLY corrects spelling and obvious typing mistakes "
+        "in English text.\n"
+        "- Keep the original wording, tone, and sentence structure as much as possible.\n"
+        "- Do NOT rewrite or rephrase; just fix spelling, spacing, and simple grammar errors.\n"
+        "- Output only the corrected text without explanations.\n"
+        f"Text: \"{user_message.strip()}\"\n"
+        "Corrected:"
+    )
+    return _run_llm(prompt, max_tokens=max_tokens)
+
+
 def generate_qa_answer(user_message: str, max_tokens: int = 256) -> str:
     """
-    質問に答える用のプロンプト。
-    UI の「Q&A」タブから呼び出す想定。
+    Answer a user question.
+
+    Intended for the "Q&A" tab in the UI.
     """
     prompt = (
         "You are a helpful AI assistant running locally.\n"
@@ -295,10 +334,10 @@ def generate_qa_answer(user_message: str, max_tokens: int = 256) -> str:
     return _run_llm(prompt, max_tokens=max_tokens)
 
 
-# 互換性のためのエイリアス（既存コードが generate_reply を呼んでも動くように）
 def generate_reply(user_message: str, max_tokens: int = 64) -> str:
     """
-    Backward-compatible alias.
-    以前のコードと同じように、英文の書き換えとして動作します。
+    Backward-compatible alias for older code.
+
+    Behaves like generate_rewrite().
     """
     return generate_rewrite(user_message, max_tokens=max_tokens)
