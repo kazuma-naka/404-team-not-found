@@ -1,5 +1,2 @@
 ttkbootstrap==1.10.1
-numpy==2.3.5
-pyinstaller==6.7.0
-pyinstaller-hooks-contrib==2024.6
-easy_llama
+pyinstaller==6.8.0
