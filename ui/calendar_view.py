@@ -5,6 +5,8 @@ from datetime import date
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, X
+from ttkbootstrap.dialogs import Messagebox
+from ttkbootstrap.dialogs.dialogs import Querybox
 
 
 class CalendarTaskFrame(ttk.Frame):
@@ -16,6 +18,9 @@ class CalendarTaskFrame(ttk.Frame):
         - if the day has tasks, show small dots under the day number
         - clicking a day highlights the tile and shows tasks on the right
     Right: task list for the selected day
+        - tasks are grouped by course
+        - user can edit / delete the selected task
+        - selected task details are shown in a card at the bottom
     """
 
     def __init__(self, parent, controller):
@@ -34,6 +39,15 @@ class CalendarTaskFrame(ttk.Frame):
 
         # day int -> tile frame widget (for selection highlight)
         self._day_tiles: dict[int, ttk.Frame] = {}
+
+        # Currently selected date string (e.g. "2025-11-19")
+        self._current_date_str: str | None = None
+
+        # Mapping from listbox index -> sqlite3.Row (None for course header rows)
+        self._list_index_to_task: dict[int, object | None] = {}
+
+        # Currently selected task row (sqlite3.Row) or None
+        self._selected_task_row: object | None = None
 
         # ---- Top Bar (month navigation) -----------------------------------
         top = ttk.Frame(self, padding=(16, 16, 16, 0))
@@ -97,6 +111,7 @@ class CalendarTaskFrame(ttk.Frame):
         )
         self.lbl_selected_day.pack(anchor="w")
 
+        # Task list (grouped by course, with headers)
         self.tasks_list = tk.Listbox(
             right_card,
             height=18,
@@ -105,8 +120,102 @@ class CalendarTaskFrame(ttk.Frame):
         )
         self.tasks_list.pack(fill=BOTH, expand=True, pady=(8, 0))
 
+        # Bind selection event to show details and enable buttons
+        self.tasks_list.bind("<<ListboxSelect>>", self.on_task_selected)
+
+        # Action buttons (Edit / Delete)
+        btn_bar = ttk.Frame(right_card)
+        btn_bar.pack(fill=X, pady=(4, 0))
+
+        self.btn_edit = ttk.Button(
+            btn_bar,
+            text="Edit",
+            bootstyle="outline",
+            command=self.on_edit_task,
+            state="disabled",
+            width=8,
+        )
+        self.btn_edit.pack(side=tk.LEFT, padx=(0, 4))
+
+        self.btn_delete = ttk.Button(
+            btn_bar,
+            text="Delete",
+            bootstyle="danger-outline",
+            command=self.on_delete_task,
+            state="disabled",
+            width=8,
+        )
+        self.btn_delete.pack(side=tk.LEFT)
+
+        # Details card for selected task
+        self.detail_card = ttk.Frame(
+            right_card,
+            padding=12,
+            bootstyle="secondary",
+        )
+        self.detail_card.pack(fill=X, pady=(12, 0))
+
+        self.lbl_detail_title = ttk.Label(
+            self.detail_card,
+            text="Task details",
+            font=("-size", 11, "-weight", "bold"),
+        )
+        self.lbl_detail_title.grid(row=0, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(
+            self.detail_card,
+            text="Course:",
+            bootstyle="secondary",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 2))
+        self.lbl_detail_course = ttk.Label(self.detail_card, text="-")
+        self.lbl_detail_course.grid(row=1, column=1, sticky="w", pady=(8, 2))
+
+        ttk.Label(
+            self.detail_card,
+            text="Task:",
+            bootstyle="secondary",
+        ).grid(row=2, column=0, sticky="w", pady=(2, 2))
+        self.lbl_detail_task = ttk.Label(self.detail_card, text="-")
+        self.lbl_detail_task.grid(row=2, column=1, sticky="w", pady=(2, 2))
+
+        ttk.Label(
+            self.detail_card,
+            text="Due:",
+            bootstyle="secondary",
+        ).grid(row=3, column=0, sticky="w", pady=(2, 2))
+        self.lbl_detail_due = ttk.Label(self.detail_card, text="-")
+        self.lbl_detail_due.grid(row=3, column=1, sticky="w", pady=(2, 2))
+
+        ttk.Label(
+            self.detail_card,
+            text="Description:",
+            bootstyle="secondary",
+        ).grid(row=4, column=0, sticky="nw", pady=(2, 0))
+        self.lbl_detail_desc = ttk.Label(
+            self.detail_card,
+            text="-",
+            wraplength=260,
+            justify="left",
+        )
+        self.lbl_detail_desc.grid(row=4, column=1, sticky="w", pady=(2, 0))
+
+        self.detail_card.columnconfigure(1, weight=1)
+
         # Initial build (user will be set later by set_user)
         self._rebuild_calendar()
+
+    # ------------------------------------------------------------------ helpers
+    def _row_value(self, row, key: str, default=None):
+        """
+        Safe accessor for sqlite3.Row.
+
+        sqlite3.Row supports row[key] but does not provide .get().
+        """
+        try:
+            value = row[key]
+        except Exception:
+            return default
+        return value if value is not None else default
 
     # ---- Public API -------------------------------------------------------
     def set_user(self, user_id: int):
@@ -132,9 +241,12 @@ class CalendarTaskFrame(ttk.Frame):
         self.refresh_month()
 
     # ---- Data loading + UI refresh ---------------------------------------
-    def refresh_month(self):
+    def refresh_month(self, keep_selection: bool = False):
         """
         Load tasks for the current year/month from DB and rebuild calendar.
+
+        If keep_selection is True, the previously selected day is re-selected
+        (if still in the current month).
         """
         if not self.current_user_id:
             return
@@ -144,9 +256,15 @@ class CalendarTaskFrame(ttk.Frame):
             text=f"{self.current_year} / {self.current_month:02d}"
         )
 
+        prev_selected_day = self.selected_day if keep_selection else None
+
         self._load_tasks_for_month()
         self._rebuild_calendar()
-        self._clear_selected_day()
+
+        if keep_selection and prev_selected_day in self._day_tiles:
+            self.on_day_clicked(prev_selected_day)
+        else:
+            self._clear_selected_day()
 
     def _load_tasks_for_month(self):
         """
@@ -164,14 +282,20 @@ class CalendarTaskFrame(ttk.Frame):
 
         rows = self.db.fetchall(
             """
-            SELECT T.id, T.name, T.description, T.due_date
+            SELECT
+                T.id,
+                T.name,
+                T.description,
+                T.due_date,
+                C.id   AS course_id,
+                C.name AS course_name
             FROM TASK T
             JOIN COURSE C ON T.course_id = C.id
             WHERE C.user_id = ?
               AND T.due_date IS NOT NULL
               AND T.due_date <> ''
               AND T.due_date BETWEEN ? AND ?
-            ORDER BY T.due_date
+            ORDER BY C.name, T.id
             """,
             (self.current_user_id, month_start, month_end),
         )
@@ -253,15 +377,14 @@ class CalendarTaskFrame(ttk.Frame):
                 # Dots for tasks count (max 4 dots)
                 if tasks:
                     dots_count = min(len(tasks), 4)
-                    # Use a heavy circle character and add spaces between them
-                    dot_char = "●"  # thicker than "•"
+                    dot_char = "●"
                     dots_text = " ".join(dot_char for _ in range(dots_count))
 
                     lbl_dots = ttk.Label(
                         tile,
                         text=dots_text,
-                        font=("-size", 12, "-weight", "bold"),  # bigger & bold
-                        foreground="#7C3AED",  # purple-ish
+                        font=("-size", 12, "-weight", "bold"),
+                        foreground="#7C3AED",
                     )
                     lbl_dots.pack(anchor="center", pady=(4, 0))
                 else:
@@ -295,22 +418,36 @@ class CalendarTaskFrame(ttk.Frame):
         """
         self.selected_day = day
         day_str = f"{self.current_year}-{self.current_month:02d}-{day:02d}"
+        self._current_date_str = day_str
+
         tasks = self.tasks_by_date.get(day_str, [])
 
         self.lbl_selected_day.configure(text=f"Tasks on {day_str}")
         self.tasks_list.delete(0, tk.END)
+        self._list_index_to_task.clear()
+        self._selected_task_row = None
+        self._clear_task_detail()
+        self._update_action_buttons_enabled(False)
 
         if not tasks:
             self.tasks_list.insert(tk.END, "No tasks.")
         else:
+            index = 0
+            last_course = None
+            # Tasks are already ordered by course_name, T.id
             for row in tasks:
-                name = row["name"]
-                desc = (row["description"] or "").strip()
-                if desc:
-                    display = f"{name} - {desc[:40]}"
-                else:
-                    display = name
-                self.tasks_list.insert(tk.END, display)
+                course_name = self._row_value(row, "course_name", "-")
+                if course_name != last_course:
+                    header_text = f"[{course_name}]"
+                    self.tasks_list.insert(tk.END, header_text)
+                    self._list_index_to_task[index] = None  # header row
+                    index += 1
+                    last_course = course_name
+
+                display = self._row_value(row, "name", "-")
+                self.tasks_list.insert(tk.END, f"  • {display}")
+                self._list_index_to_task[index] = row
+                index += 1
 
         self._update_day_tile_selection()
 
@@ -320,8 +457,7 @@ class CalendarTaskFrame(ttk.Frame):
         """
         for day, tile in self._day_tiles.items():
             if self.selected_day == day:
-                # Selected: purple outline-like feeling
-                tile.configure(bootstyle="info")  # or "info-outline"
+                tile.configure(bootstyle="info")
             else:
                 tile.configure(bootstyle="light")
 
@@ -330,6 +466,144 @@ class CalendarTaskFrame(ttk.Frame):
         Reset selection and clear the task list on the right pane.
         """
         self.selected_day = None
+        self._current_date_str = None
+        self._selected_task_row = None
+        self._list_index_to_task.clear()
+
         self.lbl_selected_day.configure(text="No date selected")
         self.tasks_list.delete(0, tk.END)
+        self._clear_task_detail()
+        self._update_action_buttons_enabled(False)
         self._update_day_tile_selection()
+
+    # ---- Task selection and details --------------------------------------
+    def on_task_selected(self, _event):
+        """
+        Called when the user selects an item in the task list.
+        Headers are ignored; only real task rows can be selected.
+        """
+        selection = self.tasks_list.curselection()
+        if not selection:
+            self._selected_task_row = None
+            self._clear_task_detail()
+            self._update_action_buttons_enabled(False)
+            return
+
+        index = selection[0]
+        row = self._list_index_to_task.get(index)
+
+        if row is None:
+            # Course header row was selected; ignore it as a task
+            self._selected_task_row = None
+            self._clear_task_detail()
+            self._update_action_buttons_enabled(False)
+            return
+
+        self._selected_task_row = row
+        self._update_task_detail(row)
+        self._update_action_buttons_enabled(True)
+
+    def _update_task_detail(self, row):
+        """
+        Show selected task details in the detail card.
+        """
+        course_name = self._row_value(row, "course_name", "-")
+        task_name = self._row_value(row, "name", "-")
+        due_date = self._row_value(row, "due_date", "-") or "-"
+        desc_raw = self._row_value(row, "description", None)
+        desc = (desc_raw or "").strip() or "-"
+
+        self.lbl_detail_course.configure(text=course_name)
+        self.lbl_detail_task.configure(text=task_name)
+        self.lbl_detail_due.configure(text=due_date)
+        self.lbl_detail_desc.configure(text=desc)
+
+    def _clear_task_detail(self):
+        """
+        Clear the detail card labels.
+        """
+        self.lbl_detail_course.configure(text="-")
+        self.lbl_detail_task.configure(text="-")
+        self.lbl_detail_due.configure(text="-")
+        self.lbl_detail_desc.configure(text="-")
+
+    def _update_action_buttons_enabled(self, enabled: bool):
+        """
+        Enable or disable Edit/Delete buttons.
+        """
+        state = "normal" if enabled else "disabled"
+        self.btn_edit.configure(state=state)
+        self.btn_delete.configure(state=state)
+
+    # ---- Edit / Delete actions -------------------------------------------
+    def on_edit_task(self):
+        """
+        Edit the selected task (name and description).
+        """
+        if not self._selected_task_row:
+            return
+
+        row = self._selected_task_row
+        task_id = row["id"]
+        current_name = self._row_value(row, "name", "")
+        current_desc = self._row_value(row, "description", "") or ""
+
+        # Ask user for new task name
+        new_name = Querybox.get_string(
+            "Edit task name",
+            "Task name:",
+            initialvalue=current_name,
+        )
+        if new_name is None:
+            # User canceled
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            Messagebox.show_error("Task name cannot be empty.", "Error")
+            return
+
+        # Ask user for new description
+        new_desc = Querybox.get_string(
+            "Edit description",
+            "Description (optional):",
+            initialvalue=current_desc,
+        )
+        if new_desc is None:
+            # If user cancels here, keep original description
+            new_desc = current_desc
+
+        # Update DB
+        self.db.execute(
+            "UPDATE TASK SET name = ?, description = ? WHERE id = ?",
+            (new_name, new_desc, task_id),
+        )
+
+        # Refresh month and keep current day selection
+        self.refresh_month(keep_selection=True)
+
+    def on_delete_task(self):
+        """
+        Delete the selected task from DB.
+        """
+        if not self._selected_task_row:
+            return
+
+        row = self._selected_task_row
+        task_id = row["id"]
+        task_name = self._row_value(row, "name", "")
+
+        result = Messagebox.okcancel(
+            f"Delete this task?\n\n{task_name}",
+            "Confirm delete",
+        )
+        if result != "OK":
+            return
+
+        # Delete from DB
+        self.db.execute(
+            "DELETE FROM TASK WHERE id = ?",
+            (task_id,),
+        )
+
+        # Refresh month and keep current day selection
+        self.refresh_month(keep_selection=True)

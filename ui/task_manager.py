@@ -5,7 +5,7 @@ from datetime import datetime, date
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, X
 from ttkbootstrap.dialogs import Messagebox
-from ttkbootstrap.widgets import DateEntry  # ★ 追加
+from ttkbootstrap.widgets import DateEntry  # ★
 
 
 class TaskManagerFrame(ttk.Frame):
@@ -23,10 +23,10 @@ class TaskManagerFrame(ttk.Frame):
         self.db = controller.db
         self.current_user_id = None
 
-        # ---- Notion風の枠なしスタイルを定義 ---------------------------------
+        # ---- Notion-like style (borderless inputs) -------------------------
         style = ttk.Style()
 
-        # Entry 用（Task のタイトルなど）
+        # Entry style (Task title etc.)
         style.configure(
             "Notion.TEntry",
             borderwidth=0,
@@ -34,7 +34,7 @@ class TaskManagerFrame(ttk.Frame):
             padding=0,
         )
 
-        # Combobox 用（Course 選択）
+        # Combobox style (Course selection)
         style.configure(
             "Notion.TCombobox",
             borderwidth=0,
@@ -58,11 +58,11 @@ class TaskManagerFrame(ttk.Frame):
         main = ttk.Frame(self, padding=24)
         main.pack(fill=BOTH, expand=True)
 
-        # 中央寄せ用コンテナ
+        # Center container (to keep card in the middle)
         center = ttk.Frame(main)
         center.place(relx=0.5, rely=0.5, anchor="center")
 
-        # カード本体
+        # Card
         self.card = ttk.Frame(
             center,
             padding=6,
@@ -80,7 +80,7 @@ class TaskManagerFrame(ttk.Frame):
         )
         self.lbl_course_pill.grid(row=0, column=0, sticky="w")
 
-        # Course input（既存コースを選ぶ + 新規も入力できる ComboBox）
+        # Course input (Combobox: existing or new)
         ttk.Label(self.card, text="Course", bootstyle="secondary").grid(
             row=1, column=0, sticky="w", pady=(16, 4)
         )
@@ -89,12 +89,12 @@ class TaskManagerFrame(ttk.Frame):
             self.card,
             textvariable=self.course_var,
             width=30,
-            style="Notion.TCombobox",  # ★ 枠なしスタイルを適用
+            style="Notion.TCombobox",  # ★ borderless style
         )
         self.cmb_course.grid(row=2, column=0, sticky="ew")
         self.card.columnconfigure(0, weight=1)
 
-        # Task title（大きめのフォント）
+        # Task title (bigger font)
         ttk.Label(self.card, text="Task", bootstyle="secondary").grid(
             row=3, column=0, sticky="w", pady=(24, 4)
         )
@@ -103,31 +103,31 @@ class TaskManagerFrame(ttk.Frame):
             self.card,
             textvariable=self.task_var,
             font=("-size", 20),
-            style="Notion.TEntry",  # ★ 枠なしスタイルを適用
+            style="Notion.TEntry",  # ★ borderless style
         )
         self.ent_task.grid(row=4, column=0, sticky="ew")
 
-        # Due date（DateEntry でカレンダーから選択）
+        # Due date (DateEntry with calendar popup)
         ttk.Label(self.card, text="Due Date (YYYY-MM-DD)").grid(
             row=5, column=0, sticky="w", pady=(24, 4)
         )
 
-        # ★ StringVar はやめて、DateEntry 内の Entry から値を取るように統一
+        # We do not use a StringVar; always read from the internal entry widget
         self.ent_due = DateEntry(
             self.card,
-            dateformat="%Y-%m-%d",  # 表示フォーマット
+            dateformat="%Y-%m-%d",  # format in the entry field
             width=12,
         )
         self.ent_due.grid(row=6, column=0, sticky="ew")
 
-        # ★ DateEntry 内部の Entry も枠なしに
+        # Make the internal Entry of DateEntry borderless as well
         try:
             self.ent_due.entry.configure(borderwidth=0, relief="flat")
         except Exception:
-            # もしプラットフォーム依存で失敗してもアプリが落ちないようにする
+            # Ignore platform-specific failures
             pass
 
-        # Time left 表示
+        # Time left label
         self.lbl_timeleft = ttk.Label(
             self.card,
             text="Time Left: -",
@@ -135,7 +135,7 @@ class TaskManagerFrame(ttk.Frame):
         )
         self.lbl_timeleft.grid(row=7, column=0, sticky="w", pady=(8, 0))
 
-        # Save ボタン
+        # Save button
         self.btn_save = ttk.Button(
             self.card,
             text="Save Task",
@@ -144,7 +144,7 @@ class TaskManagerFrame(ttk.Frame):
         )
         self.btn_save.grid(row=8, column=0, sticky="ew", pady=(16, 0))
 
-        # 最近追加したタスク一覧（簡易）
+        # Recently added tasks
         self.recent_frame = ttk.LabelFrame(
             main,
             text="Recently added tasks",
@@ -154,15 +154,15 @@ class TaskManagerFrame(ttk.Frame):
         self.lst_recent = tk.Listbox(self.recent_frame, height=4)
         self.lst_recent.pack(fill=X)
 
-        # Enter キーで保存
+        # Enter key to save
         self.ent_task.bind("<Return>", lambda e: self.save_task())
         self.ent_due.bind("<Return>", lambda e: self.save_task())
 
-        # ★ DateEntry で日付を選択したときに TimeLeft を更新
-        self.ent_due.bind(
-            "<<DateEntrySelected>>",
-            lambda e: self._update_timeleft_label(self.ent_due.entry.get()),
-        )
+        # ★ Update Time Left when a date is selected from the calendar
+        self.ent_due.bind("<<DateEntrySelected>>", self._on_due_changed)
+
+        # ★ Also update when the user finishes typing and leaves the field
+        self.ent_due.entry.bind("<FocusOut>", self._on_due_changed)
 
     # ---- Public API ---------------------------------------------------------
     def set_user(self, user_id: int):
@@ -207,7 +207,7 @@ class TaskManagerFrame(ttk.Frame):
             self.lst_recent.insert(tk.END, line)
 
     def _get_or_create_course_id(self, course_name: str) -> int:
-        """コース名から ID を取得。なければ新規作成して ID を返す。"""
+        """Get course id by name, or create a new one and return its id."""
         rows = self.db.fetchall(
             "SELECT id FROM COURSE WHERE user_id=? AND name=? ORDER BY id DESC LIMIT 1",
             (self.current_user_id, course_name),
@@ -215,7 +215,7 @@ class TaskManagerFrame(ttk.Frame):
         if rows:
             return rows[0]["id"]
 
-        # 新規作成
+        # Create new course
         self.db.execute(
             "INSERT INTO COURSE (user_id, name, description) VALUES (?, ?, '')",
             (self.current_user_id, course_name),
@@ -225,6 +225,16 @@ class TaskManagerFrame(ttk.Frame):
             (self.current_user_id, course_name),
         )
         return rows[0]["id"]
+
+    def _on_due_changed(self, _event=None):
+        """
+        Read the current date string from DateEntry and update the Time Left label.
+        Called when:
+          - user selects a date from the popup
+          - user finishes typing and leaves the field
+        """
+        due_str = self.ent_due.entry.get().strip()
+        self._update_timeleft_label(due_str)
 
     def _update_timeleft_label(self, due_str: str):
         due_str = (due_str or "").strip()
@@ -252,7 +262,7 @@ class TaskManagerFrame(ttk.Frame):
     def save_task(self):
         course_name = self.course_var.get().strip()
         task_name = self.task_var.get().strip()
-        # ★ DateEntry 内部の Entry から文字列を取得
+        # Read date string from DateEntry internal entry
         due_str = self.ent_due.entry.get().strip()
 
         if not course_name:
@@ -262,7 +272,7 @@ class TaskManagerFrame(ttk.Frame):
             Messagebox.show_error("Task is required.", "Error")
             return
 
-        # 期日文字列は任意。あればフォーマットだけチェック
+        # Due date is optional, but validate format if present
         if due_str:
             try:
                 datetime.strptime(due_str, "%Y-%m-%d")
@@ -274,21 +284,20 @@ class TaskManagerFrame(ttk.Frame):
 
         cid = self._get_or_create_course_id(course_name)
 
-        # TASK 登録（description は空で入れる）
+        # Insert TASK (description is empty for now)
         self.db.execute(
             "INSERT INTO TASK (course_id, name, description, due_date) "
             "VALUES (?, ?, ?, ?)",
             (cid, task_name, "", due_str or None),
         )
 
-        # UI 更新
+        # Refresh UI
         self._load_courses_into_combobox()
         self._load_recent_tasks()
         self._update_timeleft_label(due_str)
 
-        # 簡単に入力欄をリセット（コースは残すと連続入力しやすい）
+        # Reset fields (keep course for quicker repeated input)
         self.task_var.set("")
-        # Due 日付もクリア（Notion っぽく毎回空から）
         try:
             self.ent_due.entry.delete(0, tk.END)
         except Exception:
