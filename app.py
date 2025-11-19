@@ -6,9 +6,9 @@ from pathlib import Path
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, YES
 
+from session.session import SessionManager  # session/session.py
 from ui.main_app import MainAppFrame
 from ui.welcome import WelcomeScreen
-from session.session import SessionManager  # session/session.py
 
 logger = logging.getLogger(__name__)
 

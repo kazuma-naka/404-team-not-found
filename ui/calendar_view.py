@@ -1,8 +1,8 @@
 # ui/calendar_view.py
 import calendar
+import tkinter as tk
 from datetime import date
 
-import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, X
 from ttkbootstrap.dialogs import Messagebox

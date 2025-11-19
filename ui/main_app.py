@@ -5,6 +5,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, YES, X
 
 from ui.calendar_view import CalendarTaskFrame
+
 # from ui.task_manager import TaskManagerFrame  # 必要ならあとで復活
 
 
