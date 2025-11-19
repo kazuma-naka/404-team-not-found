@@ -61,6 +61,7 @@ def _get_easy_llama():
     global _ez_module
     if _ez_module is None:
         import easy_llama as ez  # type: ignore[import-untyped]
+
         _ez_module = ez
     return _ez_module
 
@@ -93,50 +94,46 @@ elif sys.platform == "darwin":
 else:
     _LIB_NAME = "libllama.so"
 
+_DEFAULT_LIB_PATH = resource_path(f"native/{_LIB_NAME}")
 
-def _resolve_libllama_path() -> Path:
+
+def _auto_set_libllama_env() -> None:
     """
-    Determine the best path for the llama shared library.
+    If LIBLLAMA is unset and we have a native/<lib> file, set it.
 
-    Priority:
-      1. If running as a frozen PyInstaller app:
-         - Check DLL next to the executable (recommended deployment).
-         - Fallback to native/<name> under the PyInstaller temp dir.
-      2. If running from source:
-         - Use native/<name> relative to the project root.
+    This is mainly for PyInstaller builds where llama.dll/libllama.so
+    is bundled into native/.
     """
-    # Frozen (PyInstaller onefile / onedir)
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        candidate1 = exe_dir / _LIB_NAME
-
-        # When using --add-binary "native/llama.dll;native"
-        if hasattr(sys, "_MEIPASS"):
-            candidate2 = Path(sys._MEIPASS) / "native" / \
-                _LIB_NAME  # type: ignore[attr-defined]
-        else:
-            candidate2 = candidate1  # dummy fallback
-
-        if candidate1.is_file():
-            return candidate1
-        return candidate2
-
-    # Non-frozen (normal dev environment)
-    return resource_path(f"native/{_LIB_NAME}")
+    if "LIBLLAMA" in os.environ:
+        return
+    if _DEFAULT_LIB_PATH.is_file():
+        os.environ["LIBLLAMA"] = str(_DEFAULT_LIB_PATH)
 
 
-LIB_PATH = _resolve_libllama_path()
+_auto_set_libllama_env()
 
-# Always set LIBLLAMA if the user has not provided it.
-if "LIBLLAMA" not in os.environ:
-    os.environ["LIBLLAMA"] = str(LIB_PATH)
 
-if DEBUG_LLM:
-    print(
-        f"[DEBUG_LLM] LIBLLAMA={os.environ.get('LIBLLAMA')}",
-        file=sys.stderr,
-        flush=True,
-    )
+def get_current_libllama_path() -> str:
+    """
+    Return the current LIBLLAMA path if set, otherwise the default path.
+
+    This is only for display/debug; llama.cpp is actually loaded by
+    easy_llama on first use.
+    """
+    return os.environ.get("LIBLLAMA", str(_DEFAULT_LIB_PATH))
+
+
+def set_libllama_path(path: str | Path) -> None:
+    """
+    Manually set the LIBLLAMA environment variable.
+
+    NOTE:
+      - llama.cpp is loaded by easy_llama on FIRST use of easy_llama.Llama.
+      - Call this BEFORE the first model load for it to take effect.
+      - This does NOT reload an already-loaded llama shared library.
+    """
+    p = Path(path).resolve()
+    os.environ["LIBLLAMA"] = str(p)
 
 
 # ---- Config file -----------------------------------------------------------
@@ -199,9 +196,8 @@ if _saved_model is not None:
     _MODEL_PATH: Path = _saved_model
 elif _env_model:
     _MODEL_PATH = (
-        Path(_env_model)
-        if Path(_env_model).is_absolute()
-        else resource_path(_env_model)
+        Path(_env_model) if Path(
+            _env_model).is_absolute() else resource_path(_env_model)
     )
 else:
     _MODEL_PATH = resource_path(_DEFAULT_MODEL_REL)
@@ -224,7 +220,7 @@ def _load_model(model_path: Path) -> Any:
         if _llm is not None and _MODEL_PATH == model_path:
             return _llm
 
-        # Check existence (model file; not the DLL)
+        # Check existence
         if not model_path.is_file():
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
