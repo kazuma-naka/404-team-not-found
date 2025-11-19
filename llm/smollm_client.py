@@ -1,12 +1,11 @@
 # llm/smollm_client.py
+
 import json
 import os
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
-
-import easy_llama as ez  # pip install easy_llama
+from typing import Any, Optional
 
 
 def _ensure_stdio() -> None:
@@ -15,11 +14,9 @@ def _ensure_stdio() -> None:
     (sys.__stdout__ / sys.__stderr__) are valid file-like objects.
 
     In a PyInstaller --windowed build on Windows, these can be None,
-    and libraries like easy_llama / llama.cpp may call .fileno() on them.
+    and libraries like llama.cpp may call .fileno() on them.
     This helper assigns a write-only "null" stream when they are missing.
     """
-    # Use /dev/null equivalent as a write-only sink.
-    # We only create it if at least one stream is missing.
     need_null = (
         getattr(sys, "stdout", None) is None
         or getattr(sys, "stderr", None) is None
@@ -44,8 +41,28 @@ def _ensure_stdio() -> None:
         sys.__stderr__ = sys.stderr
 
 
-# Make sure stdio is safe before importing easy_llama
+# Make stdio safe as soon as this module is imported
 _ensure_stdio()
+
+
+# Lazy-loaded easy_llama module (to avoid top-level import reordering)
+_ez_module: Optional[Any] = None
+
+
+def _get_easy_llama():
+    """
+    Import easy_llama lazily.
+
+    We do this instead of a top-level `import easy_llama as ez` so that:
+      - we can guarantee stdio has been fixed first,
+      - code formatters (isort, etc.) do not move the import to the top again.
+    """
+    _ensure_stdio()  # safety: ensure stdio is valid before importing
+    global _ez_module
+    if _ez_module is None:
+        import easy_llama as ez  # type: ignore[import-untyped]
+        _ez_module = ez
+    return _ez_module
 
 
 # Debug flag: set DEBUG_LLM=1 in environment to enable verbose logging
@@ -140,11 +157,11 @@ else:
     _MODEL_PATH = resource_path(_DEFAULT_MODEL_REL)
 
 # Global Llama instance (lazy-loaded)
-_llm: Optional[ez.Llama] = None
+_llm: Optional[Any] = None
 _model_lock = threading.Lock()
 
 
-def _load_model(model_path: Path) -> ez.Llama:
+def _load_model(model_path: Path) -> Any:
     """
     Load a model from model_path and keep it globally.
 
@@ -155,11 +172,14 @@ def _load_model(model_path: Path) -> ez.Llama:
     with _model_lock:
         # Reuse if the requested model is already loaded
         if _llm is not None and _MODEL_PATH == model_path:
-            return _llm  # type: ignore[return-value]
+            return _llm
 
         # Check existence
         if not model_path.is_file():
             raise FileNotFoundError(f"Model file not found: {model_path}")
+
+        # Import easy_llama only when actually needed
+        ez = _get_easy_llama()
 
         # Load new model
         _llm = ez.Llama(str(model_path), verbose=False)
@@ -213,7 +233,7 @@ def reset_to_default_model() -> None:
     set_model_path(_DEFAULT_MODEL_REL, relative_to_project=True)
 
 
-def _get_llm() -> ez.Llama:
+def _get_llm() -> Any:
     """
     Internal helper: obtain the Llama instance for the current _MODEL_PATH.
 
