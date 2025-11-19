@@ -6,14 +6,8 @@ from tkinter import filedialog, messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, X
 
-from llm.smollm_client import (
-    generate_qa_answer,
-    generate_rewrite,
-    generate_spellcheck,
-    get_current_model_path,
-    reset_to_default_model,
-    set_model_path,
-)
+# 関数ごとではなくモジュール単位で import（循環参照回避）
+from llm import smollm_client
 
 
 class SingleLlmTab(ttk.Frame):
@@ -212,6 +206,7 @@ class LlmChatFrame(ttk.Frame):
     Main frame that provides:
 
       - Model selection (current model, change, reset)
+      - Llama library selection (DLL / .so)
       - Notebook with three tabs:
          * Rewrite: rewrite English text politely
          * Typos: fix English typos with minimal changes
@@ -228,7 +223,12 @@ class LlmChatFrame(ttk.Frame):
 
         ttk.Label(model_frame, text="Current model:").pack(side=tk.LEFT)
 
-        self.model_path_var = tk.StringVar(value=get_current_model_path())
+        try:
+            current_model_path = smollm_client.get_current_model_path()
+        except Exception:
+            current_model_path = "<no model configured>"
+
+        self.model_path_var = tk.StringVar(value=current_model_path)
         self.lbl_model_path = ttk.Label(
             model_frame,
             textvariable=self.model_path_var,
@@ -254,6 +254,35 @@ class LlmChatFrame(ttk.Frame):
         )
         self.btn_model_browse.pack(side=tk.RIGHT, padx=(0, 4))
 
+        # ==== Llama library (DLL / .so) selection UI ========================
+        lib_frame = ttk.LabelFrame(
+            self, text="Llama library (DLL / .so)", padding=8)
+        lib_frame.pack(fill=X, pady=(0, 8))
+
+        ttk.Label(lib_frame, text="Current LIBLLAMA:").pack(side=tk.LEFT)
+
+        try:
+            current_lib_path = smollm_client.get_current_libllama_path()
+        except Exception:
+            current_lib_path = "<not set>"
+
+        self.lib_path_var = tk.StringVar(value=current_lib_path)
+        self.lbl_lib_path = ttk.Label(
+            lib_frame,
+            textvariable=self.lib_path_var,
+            anchor="w",
+            bootstyle="secondary",
+        )
+        self.lbl_lib_path.pack(side=tk.LEFT, fill=X, expand=True, padx=(4, 8))
+
+        self.btn_lib_browse = ttk.Button(
+            lib_frame,
+            text="Change library…",
+            bootstyle="info",
+            command=self.on_change_lib,
+        )
+        self.btn_lib_browse.pack(side=tk.RIGHT, padx=(0, 4))
+
         # ==== Notebook (Rewrite / Typos / Q&A) ==============================
         notebook = ttk.Notebook(self)
         notebook.pack(fill=BOTH, expand=True)
@@ -266,7 +295,7 @@ class LlmChatFrame(ttk.Frame):
                 "This tab rewrites English text in natural, professional and polite English.\n"
                 "Paste your sentence and press Send."
             ),
-            generate_func=generate_rewrite,
+            generate_func=smollm_client.generate_rewrite,
         )
 
         # ---- Typos tab -----------------------------------------------------
@@ -277,7 +306,7 @@ class LlmChatFrame(ttk.Frame):
                 "This tab fixes English typos and spelling mistakes.\n"
                 "It keeps your wording and style, and only corrects errors."
             ),
-            generate_func=generate_spellcheck,
+            generate_func=smollm_client.generate_spellcheck,
         )
 
         # ---- Q&A tab -------------------------------------------------------
@@ -288,18 +317,19 @@ class LlmChatFrame(ttk.Frame):
                 "This tab uses the local LLM to answer your questions.\n"
                 "Ask about tasks or study, then press Send."
             ),
-            generate_func=generate_qa_answer,
+            generate_func=smollm_client.generate_qa_answer,
         )
 
         notebook.add(self.rewrite_tab, text="Rewrite")
         notebook.add(self.typo_tab, text="Typos")
         notebook.add(self.qa_tab, text="Q&A")
 
-    # ==== Model change handlers =============================================
+    # ==== Helper for model buttons =========================================
     def _set_model_buttons_state(self, state: str):
         self.btn_model_browse.configure(state=state)
         self.btn_model_reset.configure(state=state)
 
+    # ==== Model change handlers ============================================
     def on_change_model(self):
         """Let the user choose a GGUF file and switch the model."""
         path = filedialog.askopenfilename(
@@ -320,7 +350,7 @@ class LlmChatFrame(ttk.Frame):
 
     def _load_model_thread(self, path: str):
         try:
-            set_model_path(path)
+            smollm_client.set_model_path(path)
         except Exception as e:
             error_msg = str(e)
             self.after(0, lambda: self._on_model_loaded(False, error_msg))
@@ -339,7 +369,7 @@ class LlmChatFrame(ttk.Frame):
 
     def _reset_model_thread(self):
         try:
-            reset_to_default_model()
+            smollm_client.reset_to_default_model()
         except Exception as e:
             error_msg = str(e)
             self.after(0, lambda: self._on_model_loaded(False, error_msg))
@@ -349,7 +379,11 @@ class LlmChatFrame(ttk.Frame):
     def _on_model_loaded(self, success: bool, error_msg: str):
         """Update UI after model load/reset finishes."""
         self._set_model_buttons_state("normal")
-        self.model_path_var.set(get_current_model_path())
+
+        try:
+            self.model_path_var.set(smollm_client.get_current_model_path())
+        except Exception:
+            self.model_path_var.set("<no model configured>")
 
         if success:
             # Show a short message on each tab
@@ -361,5 +395,52 @@ class LlmChatFrame(ttk.Frame):
             self.rewrite_tab.show_status("Failed to change model.")
             self.typo_tab.show_status("Failed to change model.")
             self.qa_tab.show_status("Failed to change model.")
-            messagebox.showerror("Model load error",
-                                 f"Failed to load model:\n{error_msg}")
+            messagebox.showerror(
+                "Model load error",
+                f"Failed to load model:\n{error_msg}",
+            )
+
+    # ==== Llama library change handler =====================================
+    def on_change_lib(self):
+        """
+        Let the user choose llama.dll / libllama.so and set LIBLLAMA.
+
+        NOTE:
+          - This should be called BEFORE the first LLM call for it to affect
+            which shared library is loaded.
+        """
+        # 簡易的なフィルタだけ（OS 毎に完璧ではないが十分）
+        if self.controller.tk.call("tk", "windowingsystem") == "win32":
+            filetypes = [("llama.dll", "llama.dll"), ("All files", "*.*")]
+        else:
+            filetypes = [
+                ("Llama library", "libllama*.so"),
+                ("All files", "*.*"),
+            ]
+
+        path = filedialog.askopenfilename(
+            title="Select llama library (DLL / .so)",
+            filetypes=filetypes,
+        )
+        if not path:
+            return
+
+        try:
+            smollm_client.set_libllama_path(path)
+        except Exception as e:
+            messagebox.showerror(
+                "LIBLLAMA error",
+                f"Failed to set LIBLLAMA:\n{e}",
+            )
+            return
+
+        # 更新後の値を表示
+        try:
+            self.lib_path_var.set(smollm_client.get_current_libllama_path())
+        except Exception:
+            self.lib_path_var.set(path)
+
+        # 各タブにトースト表示
+        self.rewrite_tab.show_status("LIBLLAMA updated.")
+        self.typo_tab.show_status("LIBLLAMA updated.")
+        self.qa_tab.show_status("LIBLLAMA updated.")
