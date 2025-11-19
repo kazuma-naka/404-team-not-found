@@ -1,6 +1,7 @@
 # app.py
 import logging
 import sys
+import tkinter as tk
 from pathlib import Path
 
 import ttkbootstrap as ttk
@@ -38,6 +39,13 @@ def main() -> None:
     app = ttk.Window(themename="darkly")
     app.title("Task Manager")
     app.geometry("900x900")
+
+    try:
+        icon_path = resource_path("assets/app_icon.png")  # PNG recommended
+        icon_image = tk.PhotoImage(file=str(icon_path))
+        app.iconphoto(True, icon_image)
+    except Exception:
+        logger.warning("Failed to load app icon.", exc_info=True)
 
     # Track the current theme name
     app.current_theme = "darkly"
