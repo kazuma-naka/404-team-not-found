@@ -29,7 +29,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # ttkbootstrap のデータ資産を確実に収集したい場合に備え collect-all を使うためPyInstallerは必須
+          # PyInstaller should be installed via requirements.txt (or add it here)
 
       # OSごとに --add-data の区切り文字が異なるため分岐
       - name: Build (Windows)
@@ -40,7 +40,9 @@ jobs:
           --onefile
           --windowed
           --collect-all ttkbootstrap
+          --icon "assets/app_icon.ico"
           --add-data "db\\schema.sql;db"
+          --add-data "assets\\app_icon.png;assets"
       - name: Build (Linux)
         if: runner.os == 'Linux'
         run: >
@@ -49,7 +51,9 @@ jobs:
           --onefile
           --windowed
           --collect-all ttkbootstrap
+          --icon "assets/app_icon.png"
           --add-data "db/schema.sql:db"
+          --add-data "assets/app_icon.png:assets"
       - name: Build (macOS)
         if: runner.os == 'macOS'
         run: >
@@ -59,6 +63,7 @@ jobs:
           --windowed
           --collect-all ttkbootstrap
           --add-data "db/schema.sql:db"
+          --add-data "assets/app_icon.png:assets"
 
       # アセット名整形（macは .app を zip 化）
       - name: Prepare release asset
@@ -87,7 +92,6 @@ jobs:
               fi
             fi
             cd -
-            # もし上記で echo が未実行なら明示的にセット（存在チェック）
             if [ -z "${ASSET_PATH:-}" ]; then
               echo "ASSET_PATH=dist/TaskManager-macos.zip" >> $GITHUB_ENV
             fi

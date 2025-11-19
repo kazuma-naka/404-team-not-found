@@ -1,9 +1,8 @@
 # ui/main_app.py
 import logging
 import tkinter as tk
-from tkinter import filedialog
 from datetime import datetime, timezone
-
+from tkinter import filedialog
 from zoneinfo import ZoneInfo
 
 import ttkbootstrap as ttk
