@@ -43,7 +43,7 @@ jobs:
           --collect-all ttkbootstrap
           --collect-all numpy
           --add-data "db\\schema.sql;db"
-          # ★ いまは llama.dll が無いので --add-binary は付けない
+          --add-binary "native\\llama.dll;native"
 
       # ---------- Linux build ----------
       - name: Build (Linux)
