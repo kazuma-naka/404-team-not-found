@@ -1,5 +1,6 @@
 # ui/calendar_view.py
 import calendar
+import re
 import tkinter as tk
 from datetime import date
 
@@ -92,7 +93,7 @@ class CalendarTaskFrame(ttk.Frame):
         self.calendar_card = ttk.Frame(
             main,
             padding=16,
-            bootstyle="light",  # white card feeling
+            bootstyle="light",
             borderwidth=1,
             relief="solid",
         )
@@ -109,7 +110,7 @@ class CalendarTaskFrame(ttk.Frame):
         )
         right_card.pack(side=tk.LEFT, fill=BOTH, expand=True, padx=(16, 0))
 
-        # ---- header: "Tasks on ..." + +Add Task ボタン --------------------
+        # ---- header: "Tasks on ..." + +Add Task button --------------------
         header = ttk.Frame(right_card, padding=(0, 0, 0, 4))
         header.pack(fill=X)
 
@@ -123,14 +124,14 @@ class CalendarTaskFrame(ttk.Frame):
         self.btn_toggle_add = ttk.Button(
             header,
             text="+ Add task for this day",
-            bootstyle="success",           # filled green button (more visible)
+            bootstyle="success",
             command=self.on_add_task_button_click,
-            padding=(16, 6),               # bigger clickable area
-            width=20,                      # wide enough to stand out
+            padding=(16, 6),
+            width=20,
         )
-        # 最初は pack しない
+        # initially not packed
 
-        # ---- Add-task form (最初は非表示) ---------------------------------
+        # ---- Add-task form (initially hidden) -----------------------------
         self.add_task_frame = ttk.LabelFrame(
             right_card,
             text="Add task",
@@ -144,7 +145,6 @@ class CalendarTaskFrame(ttk.Frame):
             bootstyle="danger",
             command=self._hide_add_task_form,
         )
-
         self.btn_close_add.grid(row=0, column=1, sticky="e")
 
         ttk.Label(self.add_task_frame, text="Course", bootstyle="secondary").grid(
@@ -226,7 +226,7 @@ class CalendarTaskFrame(ttk.Frame):
             padding=12,
             bootstyle="secondary",
         )
-        self.detail_card.pack(fill=X, pady=(12, 0))
+        self.detail_card.pack(fill=BOTH, pady=(12, 0), expand=True)
 
         self.lbl_detail_title = ttk.Label(
             self.detail_card,
@@ -239,36 +239,73 @@ class CalendarTaskFrame(ttk.Frame):
             self.detail_card,
             text="Course:",
         ).grid(row=1, column=0, sticky="w", pady=(8, 2))
-        self.lbl_detail_course = ttk.Label(self.detail_card, text="-")
+
+        # These value labels will be styled to match the description background
+        self.lbl_detail_course = tk.Label(
+            self.detail_card,
+            text="-",
+            anchor="w",
+        )
         self.lbl_detail_course.grid(row=1, column=1, sticky="w", pady=(8, 2))
 
         ttk.Label(
             self.detail_card,
             text="Task:",
         ).grid(row=2, column=0, sticky="w", pady=(2, 2))
-        self.lbl_detail_task = ttk.Label(self.detail_card, text="-")
+        self.lbl_detail_task = tk.Label(
+            self.detail_card,
+            text="-",
+            anchor="w",
+        )
         self.lbl_detail_task.grid(row=2, column=1, sticky="w", pady=(2, 2))
 
         ttk.Label(
             self.detail_card,
             text="Due:",
         ).grid(row=3, column=0, sticky="w", pady=(2, 2))
-        self.lbl_detail_due = ttk.Label(self.detail_card, text="-")
+        self.lbl_detail_due = tk.Label(
+            self.detail_card,
+            text="-",
+            anchor="w",
+        )
         self.lbl_detail_due.grid(row=3, column=1, sticky="w", pady=(2, 2))
 
         ttk.Label(
             self.detail_card,
             text="Description:",
-        ).grid(row=4, column=0, sticky="nw", pady=(2, 0))
-        self.lbl_detail_desc = ttk.Label(
-            self.detail_card,
-            text="-",
-            wraplength=260,
-            justify="left",
+        ).grid(row=4, column=0, sticky="nw", pady=(4, 0))
+
+        # Scrollable description area
+        desc_container = ttk.Frame(self.detail_card)
+        desc_container.grid(row=4, column=1, sticky="nsew", pady=(4, 0))
+
+        self.txt_detail_desc = tk.Text(
+            desc_container,
+            height=12,
+            wrap="word",
+            borderwidth=0,
+            highlightthickness=0,
         )
-        self.lbl_detail_desc.grid(row=4, column=1, sticky="w", pady=(2, 0))
+        self.txt_detail_desc.pack(side=tk.LEFT, fill=BOTH, expand=True)
+
+        scroll_desc = ttk.Scrollbar(
+            desc_container,
+            orient="vertical",
+            command=self.txt_detail_desc.yview,
+        )
+        scroll_desc.pack(side=tk.RIGHT, fill="y")
+
+        self.txt_detail_desc.configure(yscrollcommand=scroll_desc.set)
+        self.txt_detail_desc.configure(state="disabled")
+
+        # Make the background of Course/Task/Due value labels match the Text background
+        desc_bg = self.txt_detail_desc.cget("background")
+        self.lbl_detail_course.configure(bg=desc_bg)
+        self.lbl_detail_task.configure(bg=desc_bg)
+        self.lbl_detail_due.configure(bg=desc_bg)
 
         self.detail_card.columnconfigure(1, weight=1)
+        self.detail_card.rowconfigure(4, weight=1)
 
         # Initial build (user will be set later by set_user)
         self._rebuild_calendar()
@@ -281,6 +318,42 @@ class CalendarTaskFrame(ttk.Frame):
         except Exception:
             return default
         return value if value is not None else default
+
+    def _set_detail_desc_text(self, text: str):
+        """Set text into the description Text widget (read-only)."""
+        self.txt_detail_desc.configure(state="normal")
+        self.txt_detail_desc.delete("1.0", tk.END)
+        self.txt_detail_desc.insert("1.0", text)
+        self.txt_detail_desc.configure(state="disabled")
+        self.txt_detail_desc.yview_moveto(0.0)
+
+    def _format_description(self, text: str | None) -> str:
+        """
+        Format a raw description string (for example from an ICS file)
+        into a more readable paragraph text.
+        """
+        if not text:
+            return "-"
+
+        s = str(text)
+
+        # Unescape common ICS sequences
+        # Order matters: unescape backslash last
+        s = s.replace("\\\\", "\\")
+        s = s.replace("\\n", "\n")
+        s = s.replace("\\,", ",")
+        s = s.replace("\\;", ";")
+
+        # Unfold ICS lines: newline followed by space or tab means continuation
+        s = re.sub(r"\n[ \t]+", " ", s)
+
+        # Strip trailing spaces on each line
+        s = "\n".join(line.rstrip() for line in s.splitlines())
+
+        # Collapse 3+ consecutive newlines into at most 2
+        s = re.sub(r"\n{3,}", "\n\n", s)
+
+        return s.strip() or "-"
 
     # ---- Public API -------------------------------------------------------
     def set_user(self, user_id: int):
@@ -425,7 +498,6 @@ class CalendarTaskFrame(ttk.Frame):
                     text=str(day),
                     font=("-size", 11, "-weight", "bold"),
                     anchor="center",
-
                 )
                 lbl_day.pack(anchor="center")
 
@@ -481,11 +553,9 @@ class CalendarTaskFrame(ttk.Frame):
         self._clear_task_detail()
         self._update_action_buttons_enabled(False)
 
-        # 日付が選択されたので +Add Task ボタンを表示
         if self.btn_toggle_add.winfo_manager() == "":
             self.btn_toggle_add.pack(side=tk.RIGHT)
 
-        # すでにフォームが開いている場合はタイトルだけ更新
         if self.add_task_frame.winfo_manager():
             self.add_task_frame.configure(text=f"Add task on {day_str}")
 
@@ -499,14 +569,17 @@ class CalendarTaskFrame(ttk.Frame):
                 if course_name != last_course:
                     header_text = f"[{course_name}]"
                     self.tasks_list.insert(tk.END, header_text)
-                    self._list_index_to_task[index] = None
+                    self._list_index_to_task[index] = None  # header row
                     index += 1
                     last_course = course_name
 
                 display = self._row_value(row, "name", "-")
                 self.tasks_list.insert(tk.END, f"  • {display}")
-                self._list_index_to_task[index] = row
+                self._list_index_to_task[index] = row  # real task row
                 index += 1
+
+            # ★ New: automatically select the first task for this day
+            self._auto_select_first_task()
 
         self._update_day_tile_selection()
 
@@ -532,7 +605,6 @@ class CalendarTaskFrame(ttk.Frame):
         self._update_action_buttons_enabled(False)
         self._update_day_tile_selection()
 
-        # ボタンとフォームを隠す
         if self.btn_toggle_add.winfo_manager():
             self.btn_toggle_add.pack_forget()
         self._hide_add_task_form()
@@ -540,8 +612,8 @@ class CalendarTaskFrame(ttk.Frame):
     # ---- Add-task form toggle --------------------------------------------
     def on_add_task_button_click(self):
         """
-        上部の「+ Add Task」ボタンが押されたとき。
-        最初のクリックでフォームを表示、2回目で閉じるトグルにしてある。
+        Called when the top "+ Add task" button is pressed.
+        Toggles the inline add-task form.
         """
         if not self._current_date_str:
             Messagebox.show_info(
@@ -574,7 +646,6 @@ class CalendarTaskFrame(ttk.Frame):
         if self.add_task_frame.winfo_manager():
             self.add_task_frame.pack_forget()
         self.task_var.set("")
-        # course_var は維持（連続入力しやすくするため）
 
     # ---- Task selection and details --------------------------------------
     def on_task_selected(self, _event):
@@ -603,23 +674,47 @@ class CalendarTaskFrame(ttk.Frame):
         task_name = self._row_value(row, "name", "-")
         due_date = self._row_value(row, "due_date", "-") or "-"
         desc_raw = self._row_value(row, "description", None)
-        desc = (desc_raw or "").strip() or "-"
+        desc = self._format_description(desc_raw)
 
         self.lbl_detail_course.configure(text=course_name)
         self.lbl_detail_task.configure(text=task_name)
         self.lbl_detail_due.configure(text=due_date)
-        self.lbl_detail_desc.configure(text=desc)
+        self._set_detail_desc_text(desc)
 
     def _clear_task_detail(self):
         self.lbl_detail_course.configure(text="-")
         self.lbl_detail_task.configure(text="-")
         self.lbl_detail_due.configure(text="-")
-        self.lbl_detail_desc.configure(text="-")
+        self._set_detail_desc_text("-")
 
     def _update_action_buttons_enabled(self, enabled: bool):
         state = "normal" if enabled else "disabled"
         self.btn_edit.configure(state=state)
         self.btn_delete.configure(state=state)
+
+    def _auto_select_first_task(self):
+        """
+        Select the first actual task row (not a course header) in the listbox
+        and update the detail panel + buttons.
+        """
+        if not self._list_index_to_task:
+            return
+
+        # Find the first index that maps to a real task row
+        for index in sorted(self._list_index_to_task.keys()):
+            row = self._list_index_to_task[index]
+            if row is not None:
+                # Clear previous selection, select this row
+                self.tasks_list.selection_clear(0, tk.END)
+                self.tasks_list.selection_set(index)
+                self.tasks_list.activate(index)
+                self.tasks_list.see(index)
+
+                # Update internal state and details
+                self._selected_task_row = row
+                self._update_task_detail(row)
+                self._update_action_buttons_enabled(True)
+                break
 
     # ---- Edit / Delete actions -------------------------------------------
     def on_edit_task(self):
@@ -713,8 +808,8 @@ class CalendarTaskFrame(ttk.Frame):
 
     def on_add_task(self):
         """
-        Form 内の「Add」ボタン。
-        現在選択中の日付にタスクを追加する。
+        Called when the inline "Add" button is pressed.
+        Adds a task to the currently selected date.
         """
         if not self._current_date_str:
             Messagebox.show_info(
