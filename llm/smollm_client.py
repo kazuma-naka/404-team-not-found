@@ -6,6 +6,9 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 import easy_llama as ez  # pip install easy_llama
 
 # Debug flag: set DEBUG_LLM=1 in environment to enable verbose logging
