@@ -24,7 +24,7 @@ def resource_path(rel: str) -> Path:
 
 def main() -> None:
     # Main window (controller for all main screens)
-    app = ttk.Window(themename="superhero")
+    app = ttk.Window()
     app.title("Task Manager")
     app.geometry("900x600")
 
