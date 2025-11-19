@@ -93,56 +93,22 @@ elif sys.platform == "darwin":
 else:
     _LIB_NAME = "libllama.so"
 
+_DEV_LIB_PATH = resource_path(f"native/{_LIB_NAME}")
 
-def _find_libllama() -> Optional[Path]:
-    """
-    Try to locate the libllama shared library.
-
-    Priority:
-      1. If LIBLLAMA is already set and points to an existing file, use that.
-      2. Search common locations:
-         - <_MEIPASS>/native/<name> (PyInstaller bundle)
-         - <_MEIPASS>/<name>
-         - project_root/native/<name> (dev)
-         - project_root/<name>
-         - current_working_dir/native/<name>
-         - current_working_dir/<name>
-    """
-    # 1. Respect an existing LIBLLAMA if it is valid
-    existing = os.environ.get("LIBLLAMA")
-    if existing:
-        p = Path(existing)
-        if p.is_file():
-            return p
-
-    candidates: list[Path] = []
-
-    # Base directories to search
-    bases: list[Path] = []
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        bases.append(Path(sys._MEIPASS))  # PyInstaller temp dir
-    # Project root (dev)
-    bases.append(Path(__file__).resolve().parents[1])
-    # Current working directory (just in case)
-    bases.append(Path.cwd())
-
-    for base in bases:
-        candidates.append(base / "native" / _LIB_NAME)
-        candidates.append(base / _LIB_NAME)
-
-    for c in candidates:
-        if c.is_file():
-            return c
-
-    return None
-
-
-_LIB_PATH = _find_libllama()
-if _LIB_PATH is not None:
-    os.environ["LIBLLAMA"] = str(_LIB_PATH)
-# If we still did not find anything, we leave LIBLLAMA unset.
-# easy_llama / llama.cpp may still succeed if the loader can find the library
-# via the system default search paths.
+# Only set LIBLLAMA automatically if the user has not provided one.
+if "LIBLLAMA" not in os.environ:
+    if getattr(sys, "frozen", False):
+        # In a PyInstaller bundle:
+        #  - the shared library is embedded via --add-binary
+        #  - PyInstaller patches ctypes so that using just the base name
+        #    (e.g. "llama.dll") resolves to the bundled file inside _MEIPASS.
+        os.environ["LIBLLAMA"] = _LIB_NAME
+    else:
+        # In development, prefer the native/ folder if the file exists.
+        if _DEV_LIB_PATH.is_file():
+            os.environ["LIBLLAMA"] = str(_DEV_LIB_PATH)
+        # Otherwise we leave LIBLLAMA unset and let easy_llama fall back
+        # to its own internal logic.
 
 
 # ---- Config file -----------------------------------------------------------
