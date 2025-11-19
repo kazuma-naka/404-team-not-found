@@ -84,10 +84,20 @@ def resource_path(rel: str) -> Path:
     return base / rel
 
 
-# ---- libllama.so setup -----------------------------------------------------
+# ---- libllama shared library setup ----------------------------------------
 
-LIB_PATH = resource_path("native/libllama.so")
+if sys.platform.startswith("win"):
+    _LIB_NAME = "llama.dll"
+elif sys.platform == "darwin":
+    _LIB_NAME = "libllama.dylib"
+else:
+    _LIB_NAME = "libllama.so"
+
+LIB_PATH = resource_path(f"native/{_LIB_NAME}")
+
+# Set LIBLLAMA only if not already set by the environment
 os.environ.setdefault("LIBLLAMA", str(LIB_PATH))
+
 
 # ---- Config file -----------------------------------------------------------
 
