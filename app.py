@@ -35,9 +35,9 @@ def main() -> None:
     )
 
     # Main window (root Tk controller)
-    app = ttk.Window()
+    app = ttk.Window(themename="darkly")
     app.title("Task Manager")
-    app.geometry("900x800")
+    app.geometry("900x900")
 
     # Paths for the SQLite DB and schema (works in dev and in PyInstaller)
     db_path = resource_path("task_manager.db")

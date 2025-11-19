@@ -21,6 +21,7 @@ class CalendarTaskFrame(ttk.Frame):
         - tasks are grouped by course
         - user can edit / delete the selected task
         - selected task details are shown in a card at the bottom
+        - selected day has an inline "Add Task" form
     """
 
     def __init__(self, parent, controller):
@@ -48,6 +49,10 @@ class CalendarTaskFrame(ttk.Frame):
 
         # Currently selected task row (sqlite3.Row) or None
         self._selected_task_row: object | None = None
+
+        # Add-task form variables (right pane)
+        self.course_var = tk.StringVar()
+        self.task_var = tk.StringVar()
 
         # ---- Top Bar (month navigation) -----------------------------------
         top = ttk.Frame(self, padding=(16, 16, 16, 0))
@@ -104,14 +109,82 @@ class CalendarTaskFrame(ttk.Frame):
         )
         right_card.pack(side=tk.LEFT, fill=BOTH, expand=True, padx=(16, 0))
 
+        # ---- header: "Tasks on ..." + +Add Task ボタン --------------------
+        header = ttk.Frame(right_card, padding=(0, 0, 0, 4))
+        header.pack(fill=X)
+
         self.lbl_selected_day = ttk.Label(
-            right_card,
+            header,
             text="No date selected",
             font=("-size", 12, "-weight", "bold"),
         )
-        self.lbl_selected_day.pack(anchor="w")
+        self.lbl_selected_day.pack(side=tk.LEFT)
 
-        # Task list (grouped by course, with headers)
+        self.btn_toggle_add = ttk.Button(
+            header,
+            text="+ Add task for this day",
+            bootstyle="success",           # filled green button (more visible)
+            command=self.on_add_task_button_click,
+            padding=(16, 6),               # bigger clickable area
+            width=20,                      # wide enough to stand out
+        )
+        # 最初は pack しない
+
+        # ---- Add-task form (最初は非表示) ---------------------------------
+        self.add_task_frame = ttk.LabelFrame(
+            right_card,
+            text="Add task",
+            padding=8,
+        )
+
+        self.btn_close_add = ttk.Button(
+            self.add_task_frame,
+            text="×",
+            width=3,
+            bootstyle="danger",
+            command=self._hide_add_task_form,
+        )
+
+        self.btn_close_add.grid(row=0, column=1, sticky="e")
+
+        ttk.Label(self.add_task_frame, text="Course", bootstyle="secondary").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.cmb_course = ttk.Combobox(
+            self.add_task_frame,
+            textvariable=self.course_var,
+            width=26,
+        )
+        self.cmb_course.grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 4),
+        )
+
+        ttk.Label(self.add_task_frame, text="Task", bootstyle="secondary").grid(
+            row=2, column=0, sticky="w", pady=(4, 0)
+        )
+        self.ent_task = ttk.Entry(
+            self.add_task_frame,
+            textvariable=self.task_var,
+        )
+        self.ent_task.grid(row=3, column=0, columnspan=2, sticky="ew")
+
+        self.btn_add_task = ttk.Button(
+            self.add_task_frame,
+            text="Add",
+            bootstyle="success",
+            width=10,
+            command=self.on_add_task,
+        )
+        self.btn_add_task.grid(row=4, column=1, sticky="e", pady=(8, 0))
+
+        self.add_task_frame.columnconfigure(0, weight=1)
+        self.add_task_frame.columnconfigure(1, weight=1)
+
+        # ---- Task list (grouped by course, with headers) -------------------
         self.tasks_list = tk.Listbox(
             right_card,
             height=18,
@@ -165,7 +238,6 @@ class CalendarTaskFrame(ttk.Frame):
         ttk.Label(
             self.detail_card,
             text="Course:",
-            bootstyle="secondary",
         ).grid(row=1, column=0, sticky="w", pady=(8, 2))
         self.lbl_detail_course = ttk.Label(self.detail_card, text="-")
         self.lbl_detail_course.grid(row=1, column=1, sticky="w", pady=(8, 2))
@@ -173,7 +245,6 @@ class CalendarTaskFrame(ttk.Frame):
         ttk.Label(
             self.detail_card,
             text="Task:",
-            bootstyle="secondary",
         ).grid(row=2, column=0, sticky="w", pady=(2, 2))
         self.lbl_detail_task = ttk.Label(self.detail_card, text="-")
         self.lbl_detail_task.grid(row=2, column=1, sticky="w", pady=(2, 2))
@@ -181,7 +252,6 @@ class CalendarTaskFrame(ttk.Frame):
         ttk.Label(
             self.detail_card,
             text="Due:",
-            bootstyle="secondary",
         ).grid(row=3, column=0, sticky="w", pady=(2, 2))
         self.lbl_detail_due = ttk.Label(self.detail_card, text="-")
         self.lbl_detail_due.grid(row=3, column=1, sticky="w", pady=(2, 2))
@@ -189,7 +259,6 @@ class CalendarTaskFrame(ttk.Frame):
         ttk.Label(
             self.detail_card,
             text="Description:",
-            bootstyle="secondary",
         ).grid(row=4, column=0, sticky="nw", pady=(2, 0))
         self.lbl_detail_desc = ttk.Label(
             self.detail_card,
@@ -206,11 +275,7 @@ class CalendarTaskFrame(ttk.Frame):
 
     # ------------------------------------------------------------------ helpers
     def _row_value(self, row, key: str, default=None):
-        """
-        Safe accessor for sqlite3.Row.
-
-        sqlite3.Row supports row[key] but does not provide .get().
-        """
+        """Safe accessor for sqlite3.Row."""
         try:
             value = row[key]
         except Exception:
@@ -221,6 +286,7 @@ class CalendarTaskFrame(ttk.Frame):
     def set_user(self, user_id: int):
         """Called from App after login."""
         self.current_user_id = user_id
+        self._load_courses_into_combobox()
         self.refresh_month()
 
     # ---- Month navigation -------------------------------------------------
@@ -230,7 +296,7 @@ class CalendarTaskFrame(ttk.Frame):
             self.current_year -= 1
         else:
             self.current_month -= 1
-        self.refresh_month()
+        self.refresh_month(keep_selection=True)
 
     def goto_next_month(self):
         if self.current_month == 12:
@@ -238,20 +304,16 @@ class CalendarTaskFrame(ttk.Frame):
             self.current_year += 1
         else:
             self.current_month += 1
-        self.refresh_month()
+        self.refresh_month(keep_selection=True)
 
     # ---- Data loading + UI refresh ---------------------------------------
     def refresh_month(self, keep_selection: bool = False):
         """
         Load tasks for the current year/month from DB and rebuild calendar.
-
-        If keep_selection is True, the previously selected day is re-selected
-        (if still in the current month).
         """
         if not self.current_user_id:
             return
 
-        # Month label (e.g. "2025 / 11")
         self.lbl_month.configure(
             text=f"{self.current_year} / {self.current_month:02d}"
         )
@@ -267,9 +329,7 @@ class CalendarTaskFrame(ttk.Frame):
             self._clear_selected_day()
 
     def _load_tasks_for_month(self):
-        """
-        Load tasks for this user and current month from TASK & COURSE tables.
-        """
+        """Load tasks for this user and current month from TASK & COURSE."""
         self.tasks_by_date.clear()
         if not self.current_user_id:
             return
@@ -307,10 +367,7 @@ class CalendarTaskFrame(ttk.Frame):
             self.tasks_by_date.setdefault(due, []).append(row)
 
     def _rebuild_calendar(self):
-        """
-        Rebuild calendar tiles for the current month.
-        """
-        # Clear old widgets
+        """Rebuild calendar tiles for the current month."""
         for child in self.calendar_frame.winfo_children():
             child.destroy()
         self._day_tiles.clear()
@@ -333,7 +390,6 @@ class CalendarTaskFrame(ttk.Frame):
         for row_idx, week in enumerate(weeks, start=1):
             for col_idx, day in enumerate(week):
                 if day == 0:
-                    # Empty cell (outside this month)
                     spacer = ttk.Frame(self.calendar_frame)
                     spacer.grid(
                         row=row_idx,
@@ -349,11 +405,10 @@ class CalendarTaskFrame(ttk.Frame):
                 )
                 tasks = self.tasks_by_date.get(day_str, [])
 
-                # Tile frame (card-like button)
                 tile = ttk.Frame(
                     self.calendar_frame,
                     padding=(4, 6),
-                    bootstyle="light",  # base style / background
+                    bootstyle="light",
                     borderwidth=1,
                     relief="solid",
                 )
@@ -365,16 +420,15 @@ class CalendarTaskFrame(ttk.Frame):
                     sticky="nsew",
                 )
 
-                # Large day number
                 lbl_day = ttk.Label(
                     tile,
                     text=str(day),
                     font=("-size", 11, "-weight", "bold"),
                     anchor="center",
+
                 )
                 lbl_day.pack(anchor="center")
 
-                # Dots for tasks count (max 4 dots)
                 if tasks:
                     dots_count = min(len(tasks), 4)
                     dot_char = "●"
@@ -390,7 +444,6 @@ class CalendarTaskFrame(ttk.Frame):
                 else:
                     lbl_dots = None
 
-                # Click binding (whole tile behaves like a button)
                 def _bind_click(widget):
                     widget.bind(
                         "<Button-1>",
@@ -404,8 +457,7 @@ class CalendarTaskFrame(ttk.Frame):
 
                 self._day_tiles[day] = tile
 
-        # Configure grid weights for responsive layout
-        rows_count = len(weeks) + 1  # header + weeks
+        rows_count = len(weeks) + 1
         for r in range(rows_count):
             self.calendar_frame.rowconfigure(r, weight=1)
         for c in range(7):
@@ -429,18 +481,25 @@ class CalendarTaskFrame(ttk.Frame):
         self._clear_task_detail()
         self._update_action_buttons_enabled(False)
 
+        # 日付が選択されたので +Add Task ボタンを表示
+        if self.btn_toggle_add.winfo_manager() == "":
+            self.btn_toggle_add.pack(side=tk.RIGHT)
+
+        # すでにフォームが開いている場合はタイトルだけ更新
+        if self.add_task_frame.winfo_manager():
+            self.add_task_frame.configure(text=f"Add task on {day_str}")
+
         if not tasks:
             self.tasks_list.insert(tk.END, "No tasks.")
         else:
             index = 0
             last_course = None
-            # Tasks are already ordered by course_name, T.id
             for row in tasks:
                 course_name = self._row_value(row, "course_name", "-")
                 if course_name != last_course:
                     header_text = f"[{course_name}]"
                     self.tasks_list.insert(tk.END, header_text)
-                    self._list_index_to_task[index] = None  # header row
+                    self._list_index_to_task[index] = None
                     index += 1
                     last_course = course_name
 
@@ -452,9 +511,6 @@ class CalendarTaskFrame(ttk.Frame):
         self._update_day_tile_selection()
 
     def _update_day_tile_selection(self):
-        """
-        Visually highlight the selected day tile.
-        """
         for day, tile in self._day_tiles.items():
             if self.selected_day == day:
                 tile.configure(bootstyle="info")
@@ -476,12 +532,52 @@ class CalendarTaskFrame(ttk.Frame):
         self._update_action_buttons_enabled(False)
         self._update_day_tile_selection()
 
+        # ボタンとフォームを隠す
+        if self.btn_toggle_add.winfo_manager():
+            self.btn_toggle_add.pack_forget()
+        self._hide_add_task_form()
+
+    # ---- Add-task form toggle --------------------------------------------
+    def on_add_task_button_click(self):
+        """
+        上部の「+ Add Task」ボタンが押されたとき。
+        最初のクリックでフォームを表示、2回目で閉じるトグルにしてある。
+        """
+        if not self._current_date_str:
+            Messagebox.show_info(
+                "Please select a date on the calendar first.",
+                "No date selected",
+            )
+            return
+
+        if self.add_task_frame.winfo_manager():
+            self._hide_add_task_form()
+        else:
+            self._show_add_task_form()
+
+    def _show_add_task_form(self):
+        if self._current_date_str:
+            self.add_task_frame.configure(
+                text=f"Add task on {self._current_date_str}"
+            )
+
+        if self.add_task_frame.winfo_manager() == "":
+            self.add_task_frame.pack(
+                fill=X,
+                pady=(8, 4),
+                before=self.tasks_list,
+            )
+
+        self.ent_task.focus_set()
+
+    def _hide_add_task_form(self):
+        if self.add_task_frame.winfo_manager():
+            self.add_task_frame.pack_forget()
+        self.task_var.set("")
+        # course_var は維持（連続入力しやすくするため）
+
     # ---- Task selection and details --------------------------------------
     def on_task_selected(self, _event):
-        """
-        Called when the user selects an item in the task list.
-        Headers are ignored; only real task rows can be selected.
-        """
         selection = self.tasks_list.curselection()
         if not selection:
             self._selected_task_row = None
@@ -493,7 +589,6 @@ class CalendarTaskFrame(ttk.Frame):
         row = self._list_index_to_task.get(index)
 
         if row is None:
-            # Course header row was selected; ignore it as a task
             self._selected_task_row = None
             self._clear_task_detail()
             self._update_action_buttons_enabled(False)
@@ -504,9 +599,6 @@ class CalendarTaskFrame(ttk.Frame):
         self._update_action_buttons_enabled(True)
 
     def _update_task_detail(self, row):
-        """
-        Show selected task details in the detail card.
-        """
         course_name = self._row_value(row, "course_name", "-")
         task_name = self._row_value(row, "name", "-")
         due_date = self._row_value(row, "due_date", "-") or "-"
@@ -519,27 +611,18 @@ class CalendarTaskFrame(ttk.Frame):
         self.lbl_detail_desc.configure(text=desc)
 
     def _clear_task_detail(self):
-        """
-        Clear the detail card labels.
-        """
         self.lbl_detail_course.configure(text="-")
         self.lbl_detail_task.configure(text="-")
         self.lbl_detail_due.configure(text="-")
         self.lbl_detail_desc.configure(text="-")
 
     def _update_action_buttons_enabled(self, enabled: bool):
-        """
-        Enable or disable Edit/Delete buttons.
-        """
         state = "normal" if enabled else "disabled"
         self.btn_edit.configure(state=state)
         self.btn_delete.configure(state=state)
 
     # ---- Edit / Delete actions -------------------------------------------
     def on_edit_task(self):
-        """
-        Edit the selected task (name and description).
-        """
         if not self._selected_task_row:
             return
 
@@ -548,43 +631,34 @@ class CalendarTaskFrame(ttk.Frame):
         current_name = self._row_value(row, "name", "")
         current_desc = self._row_value(row, "description", "") or ""
 
-        # Ask user for new task name
         new_name = Querybox.get_string(
             "Edit task name",
             "Task name:",
             initialvalue=current_name,
         )
         if new_name is None:
-            # User canceled
             return
         new_name = new_name.strip()
         if not new_name:
             Messagebox.show_error("Task name cannot be empty.", "Error")
             return
 
-        # Ask user for new description
         new_desc = Querybox.get_string(
             "Edit description",
             "Description (optional):",
             initialvalue=current_desc,
         )
         if new_desc is None:
-            # If user cancels here, keep original description
             new_desc = current_desc
 
-        # Update DB
         self.db.execute(
             "UPDATE TASK SET name = ?, description = ? WHERE id = ?",
             (new_name, new_desc, task_id),
         )
 
-        # Refresh month and keep current day selection
         self.refresh_month(keep_selection=True)
 
     def on_delete_task(self):
-        """
-        Delete the selected task from DB.
-        """
         if not self._selected_task_row:
             return
 
@@ -599,11 +673,77 @@ class CalendarTaskFrame(ttk.Frame):
         if result != "OK":
             return
 
-        # Delete from DB
         self.db.execute(
             "DELETE FROM TASK WHERE id = ?",
             (task_id,),
         )
 
-        # Refresh month and keep current day selection
+        self.refresh_month(keep_selection=True)
+
+    # ---- Add task from calendar ------------------------------------------
+    def _load_courses_into_combobox(self):
+        if not self.current_user_id:
+            return
+        rows = self.db.fetchall(
+            "SELECT name FROM COURSE WHERE user_id=? ORDER BY id DESC",
+            (self.current_user_id,),
+        )
+        names = [r["name"] for r in rows]
+        self.cmb_course["values"] = names
+
+    def _get_or_create_course_id(self, course_name: str) -> int:
+        rows = self.db.fetchall(
+            "SELECT id FROM COURSE WHERE user_id=? AND name=? "
+            "ORDER BY id DESC LIMIT 1",
+            (self.current_user_id, course_name),
+        )
+        if rows:
+            return rows[0]["id"]
+
+        self.db.execute(
+            "INSERT INTO COURSE (user_id, name, description) VALUES (?, ?, '')",
+            (self.current_user_id, course_name),
+        )
+        rows = self.db.fetchall(
+            "SELECT id FROM COURSE WHERE user_id=? AND name=? "
+            "ORDER BY id DESC LIMIT 1",
+            (self.current_user_id, course_name),
+        )
+        return rows[0]["id"]
+
+    def on_add_task(self):
+        """
+        Form 内の「Add」ボタン。
+        現在選択中の日付にタスクを追加する。
+        """
+        if not self._current_date_str:
+            Messagebox.show_info(
+                "Please select a date on the calendar first.",
+                "No date selected",
+            )
+            return
+
+        course_name = self.course_var.get().strip()
+        task_name = self.task_var.get().strip()
+
+        if not course_name:
+            Messagebox.show_error("Course is required.", "Error")
+            return
+        if not task_name:
+            Messagebox.show_error("Task name is required.", "Error")
+            return
+
+        cid = self._get_or_create_course_id(course_name)
+
+        self.db.execute(
+            "INSERT INTO TASK (course_id, name, description, due_date) "
+            "VALUES (?, ?, ?, ?)",
+            (cid, task_name, "", self._current_date_str),
+        )
+
+        self._load_courses_into_combobox()
+
+        self.task_var.set("")
+        self.ent_task.focus_set()
+
         self.refresh_month(keep_selection=True)
