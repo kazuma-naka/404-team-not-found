@@ -93,13 +93,50 @@ elif sys.platform == "darwin":
 else:
     _LIB_NAME = "libllama.so"
 
-LIB_PATH = resource_path(f"native/{_LIB_NAME}")
+
+def _resolve_libllama_path() -> Path:
+    """
+    Determine the best path for the llama shared library.
+
+    Priority:
+      1. If running as a frozen PyInstaller app:
+         - Check DLL next to the executable (recommended deployment).
+         - Fallback to native/<name> under the PyInstaller temp dir.
+      2. If running from source:
+         - Use native/<name> relative to the project root.
+    """
+    # Frozen (PyInstaller onefile / onedir)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidate1 = exe_dir / _LIB_NAME
+
+        # When using --add-binary "native/llama.dll;native"
+        if hasattr(sys, "_MEIPASS"):
+            candidate2 = Path(sys._MEIPASS) / "native" / \
+                _LIB_NAME  # type: ignore[attr-defined]
+        else:
+            candidate2 = candidate1  # dummy fallback
+
+        if candidate1.is_file():
+            return candidate1
+        return candidate2
+
+    # Non-frozen (normal dev environment)
+    return resource_path(f"native/{_LIB_NAME}")
+
+
+LIB_PATH = _resolve_libllama_path()
 
 # Always set LIBLLAMA if the user has not provided it.
-# Even if the file does not exist *yet* (one-file PyInstaller extraction),
-# the path will be correct once files are unpacked.
 if "LIBLLAMA" not in os.environ:
     os.environ["LIBLLAMA"] = str(LIB_PATH)
+
+if DEBUG_LLM:
+    print(
+        f"[DEBUG_LLM] LIBLLAMA={os.environ.get('LIBLLAMA')}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 # ---- Config file -----------------------------------------------------------
