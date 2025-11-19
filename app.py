@@ -39,6 +39,46 @@ def main() -> None:
     app.title("Task Manager")
     app.geometry("900x900")
 
+    # Track the current theme name
+    app.current_theme = "darkly"
+
+    # ---- Theme helper functions -------------------------------------------
+    def set_theme(theme_name: str) -> None:
+        """
+        Change the ttkbootstrap theme at runtime.
+
+        Expected values:
+          - "lumen"  (light)
+          - "darkly" (dark)
+        """
+        try:
+            app.style.theme_use(theme_name)
+            app.current_theme = theme_name
+            logger.info("Theme changed to %s", theme_name)
+        except Exception:
+            logger.warning("Failed to change theme to %s",
+                           theme_name, exc_info=True)
+
+    def toggle_theme() -> None:
+        """
+        Toggle between light and dark themes:
+          - darkly -> lumen
+          - lumen  -> darkly
+        """
+        try:
+            current = getattr(app, "current_theme", app.style.theme_use())
+        except Exception:
+            current = "darkly"
+
+        if current == "darkly":
+            set_theme("lumen")
+        else:
+            set_theme("darkly")
+
+    # Expose theme helpers on the root so child frames can call them
+    app.set_theme = set_theme        # type: ignore[attr-defined]
+    app.toggle_theme = toggle_theme  # type: ignore[attr-defined]
+
     # Paths for the SQLite DB and schema (works in dev and in PyInstaller)
     db_path = resource_path("task_manager.db")
     schema_path = resource_path("db/schema.sql")
@@ -79,8 +119,9 @@ def main() -> None:
             w.destroy()
 
         # Expose controller API to children
-        app.logout = logout  # type: ignore[attr-defined]
-        # app.db is already set in show_welcome; do not overwrite it here
+        app.logout = logout          # type: ignore[attr-defined]
+        app.set_theme = set_theme
+        app.toggle_theme = toggle_theme
 
         # Show the main application frame (Calendar + Task Manager)
         main_frame = MainAppFrame(app, app, user_row)
@@ -119,7 +160,9 @@ def main() -> None:
             for w in app.winfo_children():
                 w.destroy()
 
-            app.logout = logout  # type: ignore[attr-defined]
+            app.logout = logout          # type: ignore[attr-defined]
+            app.set_theme = set_theme
+            app.toggle_theme = toggle_theme
 
             main_frame = MainAppFrame(app, app, row)
             main_frame.pack(fill=BOTH, expand=YES)
@@ -155,9 +198,11 @@ def main() -> None:
             on_login=on_login,
         )
 
-        # Expose the DB handle on the controller (used by other frames)
+        # Expose the DB handle and controller API to other frames
         app.db = screen.db  # type: ignore[attr-defined]
-        app.logout = logout  # type: ignore[attr-defined]
+        app.logout = logout
+        app.set_theme = set_theme
+        app.toggle_theme = toggle_theme
 
         # If auto_login is requested, try to read the last user_id and skip
         # the Welcome screen if possible.
@@ -170,7 +215,8 @@ def main() -> None:
                     return
                 else:
                     logger.info(
-                        "Auto-login failed; showing Welcome screen instead.")
+                        "Auto-login failed; showing Welcome screen instead."
+                    )
 
         # Either auto_login is False, or auto-login failed.
         # Show the Welcome screen normally.
