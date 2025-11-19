@@ -1,11 +1,12 @@
 # llm/smollm_client.py
-import easy_llama as ez  # pip install easy_llama
 import json
 import os
 import sys
 import threading
 from pathlib import Path
 from typing import Optional
+
+import easy_llama as ez  # pip install easy_llama
 
 
 def _ensure_stdio() -> None:
