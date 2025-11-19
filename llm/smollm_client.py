@@ -95,8 +95,13 @@ else:
 
 LIB_PATH = resource_path(f"native/{_LIB_NAME}")
 
-# Set LIBLLAMA only if not already set by the environment
-os.environ.setdefault("LIBLLAMA", str(LIB_PATH))
+# Only set LIBLLAMA automatically if the shared library actually exists
+# and the user has not already provided their own value.
+if "LIBLLAMA" not in os.environ:
+    if LIB_PATH.is_file():
+        os.environ["LIBLLAMA"] = str(LIB_PATH)
+    # If the file does not exist, we leave LIBLLAMA unset.
+    # easy_llama / llama.cpp will then fall back to their own search logic.
 
 
 # ---- Config file -----------------------------------------------------------
