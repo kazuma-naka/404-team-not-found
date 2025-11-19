@@ -4,14 +4,16 @@ import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, YES, X
 
-from ui.llm_chat import LlmChatFrame
-from ui.task_manager import TaskManagerFrame
+from ui.calendar_view import CalendarTaskFrame
+
+# from ui.task_manager import TaskManagerFrame  # Restore if needed later
 
 
 class MainAppFrame(ttk.Frame):
     """
-    TaskManager と LLM チャットをボトムナビゲーションで切り替えるコンテナ。
-    Android の BottomNavigation に近いイメージ。
+    Main container for the application.
+    Top: user name + user menu (icon)
+    Bottom: calendar-based task UI.
     """
 
     def __init__(self, parent, controller, user_row):
@@ -20,52 +22,81 @@ class MainAppFrame(ttk.Frame):
         self.db = controller.db
         self.current_user_id = user_row["id"]
 
+        # sqlite3.Row does not have .get, so use try/except for safety
+        try:
+            name = user_row["name"]
+        except Exception:
+            name = "User"
+
+        # ---- Top Bar: Welcome / User Menu ---------------------------------
+        top = ttk.Frame(self, padding=(12, 12, 12, 0))
+        top.pack(fill=X, side=tk.TOP)
+
+        self.user_label = ttk.Label(
+            top,
+            text=f"Welcome, {name}!",
+            font=("-size", 12),
+        )
+        self.user_label.pack(side=tk.LEFT)
+
+        # User menu (theme toggle + logout)
+        self._build_user_menu(top)
+
         # ---- Content Area --------------------------------------------------
-        self.content = ttk.Frame(self, padding=0)
+        self.content = ttk.Frame(self, padding=(0, 8, 0, 0))
         self.content.pack(fill=BOTH, expand=YES)
 
-        # 2つの画面を同じ場所に重ねておき、pack_forget / pack で切り替える
-        self.task_frame = TaskManagerFrame(self.content, controller)
-        self.chat_frame = LlmChatFrame(self.content, controller)
+        # Show the calendar as the main screen
+        self.calendar_frame = CalendarTaskFrame(self.content, controller)
+        self.calendar_frame.pack(fill=BOTH, expand=YES)
+        self.calendar_frame.set_user(self.current_user_id)
 
-        # TaskManager のユーザー設定
-        self.task_frame.set_user(self.current_user_id)
+        # Window title
+        self.controller.title("Task Manager - Calendar")
 
-        # 最初は TaskManager を表示
-        self.task_frame.pack(fill=BOTH, expand=YES)
-        self.chat_frame.pack_forget()
+    # ------------------------------------------------------------------ #
+    # User icon + popup menu
+    # ------------------------------------------------------------------ #
+    def _build_user_menu(self, parent: ttk.Frame) -> None:
+        """
+        Build the popup menu for the user icon.
+        Items:
+          - Toggle theme (light/dark)
+          - Logout
+        """
+        self.user_menu = tk.Menu(self, tearoff=0)
 
-        # ---- Bottom Navigation --------------------------------------------
-        nav = ttk.Frame(self, padding=(12, 8))
-        nav.pack(fill=X, side=tk.BOTTOM)
+        # Toggle theme (if controller exposes toggle_theme)
+        toggle_theme = getattr(self.controller, "toggle_theme", None)
+        if callable(toggle_theme):
+            self.user_menu.add_command(
+                label="Toggle theme (light / dark)",
+                command=toggle_theme,
+            )
+            self.user_menu.add_separator()
 
-        self.btn_tasks = ttk.Button(
-            nav,
-            text="Tasks",
-            bootstyle="primary",
-            command=self.show_tasks,
+        # Logout
+        self.user_menu.add_command(
+            label="Logout",
+            command=self.controller.logout,
         )
-        self.btn_tasks.pack(side=tk.LEFT, expand=True, fill=X, padx=(0, 6))
 
-        self.btn_chat = ttk.Button(
-            nav,
-            text="LLM Chat",
-            bootstyle="secondary",
-            command=self.show_chat,
+        # User icon button
+        self.user_icon_button = ttk.Button(
+            parent,
+            text="Account ▼",
+            width=6,
         )
-        self.btn_chat.pack(side=tk.LEFT, expand=True, fill=X, padx=(6, 0))
+        self.user_icon_button.pack(side=tk.RIGHT)
 
-    # ---- Navigation actions -----------------------------------------------
-    def show_tasks(self):
-        self.chat_frame.pack_forget()
-        self.task_frame.pack(fill=BOTH, expand=YES)
-        self.controller.title("Task Manager")
-        self.btn_tasks.configure(bootstyle="primary")
-        self.btn_chat.configure(bootstyle="secondary")
+        # Show popup menu on left click
+        self.user_icon_button.bind("<Button-1>", self._show_user_menu)
 
-    def show_chat(self):
-        self.task_frame.pack_forget()
-        self.chat_frame.pack(fill=BOTH, expand=YES)
-        self.controller.title("Task Manager - LLM Chat")
-        self.btn_tasks.configure(bootstyle="secondary")
-        self.btn_chat.configure(bootstyle="primary")
+    def _show_user_menu(self, event: tk.Event) -> None:
+        """
+        Show the user popup menu at the mouse position.
+        """
+        try:
+            self.user_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.user_menu.grab_release()
