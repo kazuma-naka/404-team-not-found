@@ -93,22 +93,13 @@ elif sys.platform == "darwin":
 else:
     _LIB_NAME = "libllama.so"
 
-_DEV_LIB_PATH = resource_path(f"native/{_LIB_NAME}")
+LIB_PATH = resource_path(f"native/{_LIB_NAME}")
 
-# Only set LIBLLAMA automatically if the user has not provided one.
+# Always set LIBLLAMA if the user has not provided it.
+# Even if the file does not exist *yet* (one-file PyInstaller extraction),
+# the path will be correct once files are unpacked.
 if "LIBLLAMA" not in os.environ:
-    if getattr(sys, "frozen", False):
-        # In a PyInstaller bundle:
-        #  - the shared library is embedded via --add-binary
-        #  - PyInstaller patches ctypes so that using just the base name
-        #    (e.g. "llama.dll") resolves to the bundled file inside _MEIPASS.
-        os.environ["LIBLLAMA"] = _LIB_NAME
-    else:
-        # In development, prefer the native/ folder if the file exists.
-        if _DEV_LIB_PATH.is_file():
-            os.environ["LIBLLAMA"] = str(_DEV_LIB_PATH)
-        # Otherwise we leave LIBLLAMA unset and let easy_llama fall back
-        # to its own internal logic.
+    os.environ["LIBLLAMA"] = str(LIB_PATH)
 
 
 # ---- Config file -----------------------------------------------------------
@@ -196,7 +187,7 @@ def _load_model(model_path: Path) -> Any:
         if _llm is not None and _MODEL_PATH == model_path:
             return _llm
 
-        # Check existence
+        # Check existence (model file; not the DLL)
         if not model_path.is_file():
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
