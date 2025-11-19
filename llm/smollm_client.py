@@ -1,4 +1,5 @@
 # llm/smollm_client.py
+import easy_llama as ez  # pip install easy_llama
 import json
 import os
 import sys
@@ -6,10 +7,45 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-if sys.stderr is None:
-    sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
-import easy_llama as ez  # pip install easy_llama
+def _ensure_stdio() -> None:
+    """
+    Ensure that sys.stdout / sys.stderr and their "original" counterparts
+    (sys.__stdout__ / sys.__stderr__) are valid file-like objects.
+
+    In a PyInstaller --windowed build on Windows, these can be None,
+    and libraries like easy_llama / llama.cpp may call .fileno() on them.
+    This helper assigns a write-only "null" stream when they are missing.
+    """
+    # Use /dev/null equivalent as a write-only sink.
+    # We only create it if at least one stream is missing.
+    need_null = (
+        getattr(sys, "stdout", None) is None
+        or getattr(sys, "stderr", None) is None
+        or getattr(sys, "__stdout__", None) is None
+        or getattr(sys, "__stderr__", None) is None
+    )
+
+    null_stream = None
+    if need_null:
+        null_stream = open(os.devnull, "w", encoding="utf-8")
+
+    # Normal streams
+    if getattr(sys, "stdout", None) is None and null_stream is not None:
+        sys.stdout = null_stream
+    if getattr(sys, "stderr", None) is None and null_stream is not None:
+        sys.stderr = null_stream
+
+    # Original streams (used by some libraries)
+    if getattr(sys, "__stdout__", None) is None:
+        sys.__stdout__ = sys.stdout
+    if getattr(sys, "__stderr__", None) is None:
+        sys.__stderr__ = sys.stderr
+
+
+# Make sure stdio is safe before importing easy_llama
+_ensure_stdio()
+
 
 # Debug flag: set DEBUG_LLM=1 in environment to enable verbose logging
 DEBUG_LLM = os.environ.get("DEBUG_LLM", "0") == "1"
@@ -81,7 +117,7 @@ def _save_config_model_path(path: Path) -> None:
 
 # ---- Model path handling ---------------------------------------------------
 
-# Default model (same as before)
+# Default model (used when nothing else is configured)
 _DEFAULT_MODEL_REL = "models/SmolLM2-1.7B-Instruct-Q2_K_L.gguf"
 
 # Priority:
@@ -296,7 +332,7 @@ def generate_rewrite(user_message: str, max_tokens: int = 128) -> str:
         "Rewrite the following text in natural, professional and polite English.\n"
         "- Keep the original meaning.\n"
         "- Fix grammar and word choice to be kind and polite.\n"
-        f"Text: \"{user_message.strip()}\"\n"
+        f'Text: "{user_message.strip()}"\n'
         "Rewritten:"
     )
     return _run_llm(prompt, max_tokens=max_tokens)
@@ -315,7 +351,7 @@ def generate_spellcheck(user_message: str, max_tokens: int = 128) -> str:
         "- Keep the original wording, tone, and sentence structure as much as possible.\n"
         "- Do NOT rewrite or rephrase; just fix spelling, spacing, and simple grammar errors.\n"
         "- Output only the corrected text without explanations.\n"
-        f"Text: \"{user_message.strip()}\"\n"
+        f'Text: "{user_message.strip()}"\n'
         "Corrected:"
     )
     return _run_llm(prompt, max_tokens=max_tokens)
