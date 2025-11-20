@@ -1,19 +1,17 @@
 # ui/weekly_schedule.py
 import logging
+import textwrap
 import tkinter as tk
 from dataclasses import dataclass
+from tkinter import filedialog
 from typing import List
 
-import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import textwrap
-
+import matplotlib.pyplot as plt
 import ttkbootstrap as ttk
+from PIL import Image, ImageTk
 from ttkbootstrap.constants import X
 from ttkbootstrap.dialogs import Messagebox
-
-from PIL import Image, ImageTk
-from tkinter import filedialog
 
 log = logging.getLogger("TaskManager.WeeklySchedule")
 
