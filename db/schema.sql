@@ -20,3 +20,15 @@ CREATE TABLE IF NOT EXISTS TASK (
   due_date    TEXT,
   FOREIGN KEY (course_id) REFERENCES COURSE (id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS COURSE_SCHEDULE (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL,
+  course_id  INTEGER NOT NULL,
+  day        INTEGER NOT NULL,      -- 0 = Mon, 1 = Tue, ... 6 = Sun
+  start_time TEXT NOT NULL,         -- "HH:MM"
+  end_time   TEXT NOT NULL,         -- "HH:MM"
+  FOREIGN KEY (user_id)   REFERENCES USER (id)   ON DELETE CASCADE,
+  FOREIGN KEY (course_id) REFERENCES COURSE (id) ON DELETE CASCADE
+);
+
