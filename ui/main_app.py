@@ -1,27 +1,27 @@
 # ui/main_app.py
 import logging
 import tkinter as tk
-from datetime import datetime, timezone
+from datetime import datetime
 from tkinter import filedialog
-from zoneinfo import ZoneInfo
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import BOTH, YES, X
 from ttkbootstrap.dialogs import Messagebox
 
 from ui.calendar_view import CalendarTaskFrame
+from ui.weekly_schedule import WeeklyScheduleFrame
 
 log = logging.getLogger("TaskManager.MainApp")
-
-# Local timezone (York University / Toronto)
-LOCAL_TZ = ZoneInfo("America/Toronto")
 
 
 class MainAppFrame(ttk.Frame):
     """
     Main container for the application.
-    Top: user name + user menu (icon)
-    Bottom: calendar-based task UI.
+
+    Layout:
+      - Top bar: user name + user menu (account button)
+      - Center: switched content (Calendar / Weekly Schedule)
+      - No bottom navigation; switching is done via user menu.
     """
 
     def __init__(self, parent, controller, user_row):
@@ -35,7 +35,7 @@ class MainAppFrame(ttk.Frame):
         except Exception:
             name = "User"
 
-        # ---- Top Bar: Welcome / User Menu ---------------------------------
+        # ---- Top Bar -------------------------------------------------------
         top = ttk.Frame(self, padding=(12, 12, 12, 0))
         top.pack(fill=X, side=tk.TOP)
 
@@ -46,20 +46,67 @@ class MainAppFrame(ttk.Frame):
         )
         self.user_label.pack(side=tk.LEFT)
 
-        # User menu (theme toggle + logout + ics import)
+        # User menu (account button)
         self._build_user_menu(top)
 
-        # ---- Content Area --------------------------------------------------
+        # ---- Content Area (stacked frames) --------------------------------
         self.content = ttk.Frame(self, padding=(0, 8, 0, 0))
         self.content.pack(fill=BOTH, expand=YES)
 
-        # Calendar as the main screen
+        # Calendar view (existing)
         self.calendar_frame = CalendarTaskFrame(self.content, controller)
-        self.calendar_frame.pack(fill=BOTH, expand=YES)
         self.calendar_frame.set_user(self.current_user_id)
+
+        # Weekly schedule view (new)
+        self.weekly_frame = WeeklyScheduleFrame(
+            self.content,
+            controller,
+            self.current_user_id,
+        )
+
+        # Pack both into the same place, but show only one at a time
+        for frame in (self.calendar_frame, self.weekly_frame):
+            frame.pack_forget()
+
+        # Show Calendar as default
+        self._active_frame = None
+        self._show_calendar()
 
         # Window title
         self.controller.title("Task Manager - Calendar")
+
+    # ------------------------------------------------------------------ #
+    # Screen switching helpers
+    # ------------------------------------------------------------------ #
+    def _switch_content(self, frame: ttk.Frame) -> None:
+        """Hide current screen and show the requested frame."""
+        if self._active_frame is frame:
+            return
+        if self._active_frame is not None:
+            self._active_frame.pack_forget()
+        self._active_frame = frame
+        self._active_frame.pack(fill=BOTH, expand=YES)
+
+    def _show_calendar(self) -> None:
+        """Show calendar tab."""
+        self._switch_content(self.calendar_frame)
+
+    def _show_weekly(self) -> None:
+        """Show weekly schedule tab."""
+        # Ensure it uses the current user id
+        self.weekly_frame.set_user(self.current_user_id)
+        self._switch_content(self.weekly_frame)
+
+    def _toggle_weekly_from_menu(self) -> None:
+        """
+        Menu action:
+          - If Weekly is visible -> go back to Calendar
+          - If Calendar is visible -> show Weekly
+        """
+        if self._active_frame is self.weekly_frame:
+            self._show_calendar()
+        else:
+            self._show_weekly()
 
     # ------------------------------------------------------------------ #
     # User icon + popup menu
@@ -68,19 +115,13 @@ class MainAppFrame(ttk.Frame):
         """
         Build the popup menu for the user icon.
 
-        Items:
-          - Import iCalendar (.ics)...
-          - Toggle theme (light/dark)  *if controller provides toggle_theme*
-          - Logout
+        Order:
+          1) Toggle theme (light/dark)    [if available]
+          2) Weekly Schedule              (toggle Calendar / Weekly)
+          3) Import iCalendar (.ics)...
+          4) Logout
         """
         self.user_menu = tk.Menu(self, tearoff=0)
-
-        # --- iCalendar import ---------------------------------------------
-        self.user_menu.add_command(
-            label="Import iCalendar (.ics)...",
-            command=self._import_ics,
-        )
-        self.user_menu.add_separator()
 
         # Theme toggle (if available on controller)
         toggle_theme = getattr(self.controller, "toggle_theme", None)
@@ -89,9 +130,21 @@ class MainAppFrame(ttk.Frame):
                 label="Toggle theme (light / dark)",
                 command=toggle_theme,
             )
-            self.user_menu.add_separator()
 
-        # Logout
+        # Weekly schedule toggle
+        self.user_menu.add_command(
+            label="Weekly Schedule",
+            command=self._toggle_weekly_from_menu,
+        )
+
+        # iCalendar import
+        self.user_menu.add_command(
+            label="Import iCalendar (.ics)...",
+            command=self._import_ics,
+        )
+
+        # Separator + Logout
+        self.user_menu.add_separator()
         self.user_menu.add_command(
             label="Logout",
             command=self.controller.logout,
@@ -101,7 +154,7 @@ class MainAppFrame(ttk.Frame):
         self.user_icon_button = ttk.Button(
             parent,
             text="Account ▼",
-            width=6,
+            width=10,
         )
         self.user_icon_button.pack(side=tk.RIGHT)
 
@@ -109,13 +162,32 @@ class MainAppFrame(ttk.Frame):
         self.user_icon_button.bind("<Button-1>", self._show_user_menu)
 
     def _show_user_menu(self, event: tk.Event) -> None:
-        """
-        Show the user popup menu at the mouse position.
-        """
+        """Show the user popup menu at the mouse position."""
         try:
             self.user_menu.tk_popup(event.x_root, event.y_root)
         finally:
             self.user_menu.grab_release()
+
+        # Install temporary global binding to dismiss menu when clicking outside
+        # Use ButtonRelease so we don't catch the same click that opened it.
+        self.after(10, self._install_menu_dismiss_binding)
+
+    def _install_menu_dismiss_binding(self) -> None:
+        # bind_all so clicks anywhere in the app will close the menu
+        self.controller.bind_all(
+            "<ButtonRelease-1>",
+            self._dismiss_user_menu,
+            add="+",
+        )
+
+    def _dismiss_user_menu(self, event: tk.Event) -> None:
+        """Unpost the user menu and remove the temporary binding."""
+        try:
+            self.user_menu.unpost()
+        except Exception:
+            pass
+        # remove this temporary binding
+        self.controller.unbind_all("<ButtonRelease-1>")
 
     # ------------------------------------------------------------------ #
     # iCalendar (.ics) Import
@@ -127,7 +199,7 @@ class MainAppFrame(ttk.Frame):
         Mapping:
           - CATEGORIES  -> COURSE.name  (per user, get-or-create)
           - SUMMARY     -> TASK.name (with trailing ' is due' removed)
-          - DTEND       -> TASK.due_date (YYYY-MM-DD in local time; falls back to DTSTART)
+          - DTEND       -> TASK.due_date (YYYY-MM-DD; falls back to DTSTART)
           - DESCRIPTION -> TASK.description
 
         If a task with the same (course_id, name, due_date) already exists,
@@ -172,7 +244,7 @@ class MainAppFrame(ttk.Frame):
             # Remove " is due" suffix from the task name
             task_name = summary.replace(" is due", "").strip()
 
-            # Convert DTEND / DTSTART to YYYY-MM-DD in local time
+            # Convert DTEND / DTSTART to YYYY-MM-DD (no timezone conversion)
             due_date = self._parse_ics_datetime(dtend_raw)
             if not due_date:
                 continue
@@ -207,7 +279,6 @@ class MainAppFrame(ttk.Frame):
                 title="Import iCalendar",
                 message=f"Imported {imported} tasks from the calendar.",
             )
-            # Refresh calendar after import
             if hasattr(self.calendar_frame, "set_user"):
                 self.calendar_frame.set_user(self.current_user_id)
         else:
@@ -220,25 +291,11 @@ class MainAppFrame(ttk.Frame):
     # Helpers for iCalendar parsing
     # ------------------------------------------------------------------ #
     def _parse_ics_events(self, raw: str) -> list[dict[str, str]]:
-        """
-        Parse VEVENT blocks from an iCalendar (.ics) string.
-
-        Returns a list of dicts like:
-          { "SUMMARY": "...", "CATEGORIES": "...", "DTEND": "...", ... }
-
-        Behavior:
-          - Handles line folding (lines starting with space or tab are
-            treated as continuation of the previous line).
-          - Only parses lines inside BEGIN:VEVENT ... END:VEVENT blocks.
-          - Property parameters are ignored (e.g., "DTEND;TZID=..." ->
-            key "DTEND").
-        """
-        # Unfold lines according to RFC 5545 (line folding)
+        """Parse VEVENT blocks from an iCalendar (.ics) string."""
         raw_lines = raw.splitlines()
         lines: list[str] = []
         for line in raw_lines:
             if line.startswith((" ", "\t")) and lines:
-                # continuation line: append without the first space/tab
                 lines[-1] += line[1:]
             else:
                 lines.append(line)
@@ -257,44 +314,25 @@ class MainAppFrame(ttk.Frame):
                 continue
             if current is None:
                 continue
-
             if ":" not in line:
                 continue
 
-            # Example: "DTEND:20251102T040000Z"
-            # or      "DTEND;TZID=America/Toronto:20251102T000000"
             key, value = line.split(":", 1)
-            key = key.split(";", 1)[0]  # drop parameters such as ;TZID=...
+            key = key.split(";", 1)[0]
             current[key] = value
 
         return events
 
     def _parse_ics_datetime(self, dt_text: str) -> str | None:
-        """
-        Convert an iCalendar datetime value into a date string "YYYY-MM-DD".
-
-        Supported formats:
-          - UTC datetime:       20251102T040000Z
-          - Local datetime:     20251102T000000
-          - Date only:          20251102
-
-        For UTC values, this converts to local time (America/Toronto)
-        before taking the date.
-        """
+        """Convert iCalendar datetime value into 'YYYY-MM-DD' string."""
         text = dt_text.strip()
         try:
             if text.endswith("Z"):
-                # UTC datetime
-                dt = datetime.strptime(text, "%Y%m%dT%H%M%SZ").replace(
-                    tzinfo=timezone.utc
-                )
-                dt_local = dt.astimezone(LOCAL_TZ)
-                return dt_local.date().isoformat()
+                dt = datetime.strptime(text, "%Y%m%dT%H%M%SZ")
+                return dt.date().isoformat()
             if "T" in text:
-                # Floating local datetime (no timezone info)
                 dt = datetime.strptime(text, "%Y%m%dT%H%M%S")
                 return dt.date().isoformat()
-            # Date-only value
             dt = datetime.strptime(text, "%Y%m%d")
             return dt.date().isoformat()
         except Exception:
@@ -302,10 +340,7 @@ class MainAppFrame(ttk.Frame):
             return None
 
     def _get_or_create_course(self, user_id: int, name: str) -> int:
-        """
-        Return the id of COURSE for (user_id, name).
-        If it does not exist, create it and return the new id.
-        """
+        """Return COURSE.id for (user_id, name); create if missing."""
         rows = self.db.fetchall(
             "SELECT id FROM COURSE WHERE user_id=? AND name=?",
             (user_id, name),
