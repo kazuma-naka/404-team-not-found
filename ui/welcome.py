@@ -34,19 +34,19 @@ class WelcomeScreen(ttk.Frame):
         card.grid(row=0, column=0, sticky=NSEW)
         card.columnconfigure(0, weight=1)
 
-        ttk.Label(card, text="Welcome!", font=("-size", 14, "-weight", "bold")).grid(
+        ttk.Label(card, text="Welcome!", font=("-size", 14, "-weight", "bold"), bootstyle="inverse-secondary").grid(
             row=0, column=0, pady=(0, 16)
         )
 
         # Name
         self.name_var = ttk.StringVar()
-        ttk.Label(card, text="Name:").grid(row=1, column=0, sticky=W)
+        ttk.Label(card, text="Name:", bootstyle="inverse-secondary").grid(row=1, column=0, sticky=W)
         self.name_entry = ttk.Entry(card, textvariable=self.name_var, width=44)
         self.name_entry.grid(row=2, column=0, sticky=EW, pady=(4, 12))
 
         # Email
         self.email_var = ttk.StringVar()
-        ttk.Label(card, text="Email:").grid(row=3, column=0, sticky=W)
+        ttk.Label(card, text="Email:", bootstyle="inverse-secondary").grid(row=3, column=0, sticky=W)
         self.email_entry = ttk.Entry(
             card, textvariable=self.email_var, width=44)
         self.email_entry.grid(row=4, column=0, sticky=EW, pady=(4, 16))
